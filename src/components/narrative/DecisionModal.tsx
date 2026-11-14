@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { CrewAvatar } from '../../assets/proceduralPixelArt';
 import { CREW_PROFILES } from '../../data/crewProfiles';
-import { DAILY_SCENARIOS } from '../../data/dailyScenarios';
+import { DAILY_SCENARIOS, DAY7_STAGE_SPECS, getDynamicStoryRipple } from '../../data/dailyScenarios';
 import { VERIFIED_NASA_DATASETS } from '../../data/nasaVerifiedData';
 import * as soundEngine from '../../services/soundEngine';
 import type {
@@ -22,10 +22,50 @@ export interface NasaDataBadgeProps {
 
 /**
  * Preserved export (ADR-0004) separating satellite observation, scientific interpretation,
- * and game rule when referenced externally.
+ * and game simulation rule so external space flux is never conflated with internal habitat dose.
  */
-export const NasaDataBadge: React.FC<NasaDataBadgeProps> = ({ day }) => {
+export const NasaDataBadge: React.FC<NasaDataBadgeProps> = ({
+  day,
+  compact = false,
+  onTermClick,
+}) => {
   const dataset = VERIFIED_NASA_DATASETS[day];
+
+  if (compact) {
+    return (
+      <div className="rounded-2xl bg-[#11192E] border border-[#79C8E8]/40 px-2.5 py-1.5 text-[11px] text-slate-200 space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-extrabold text-[#79C8E8] tracking-wide uppercase text-[10px] truncate">
+            🛰️ {dataset.source} • {dataset.datasetTitle}
+          </span>
+          <span className="font-mono text-[10px] text-slate-400 shrink-0">
+            {dataset.recordId}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5">
+          <div className="rounded-xl bg-[#0B1222] border border-[#79C8E8]/35 px-2 py-1">
+            <p className="font-extrabold text-[#79C8E8] uppercase text-[10px]">
+              1. Satellite Observation
+            </p>
+            <p className="text-slate-200 leading-tight mt-0.5">{dataset.satelliteObservation}</p>
+          </div>
+          <div className="rounded-xl bg-[#0B1222] border border-[#FFD66B]/35 px-2 py-1">
+            <p className="font-extrabold text-[#FFD66B] uppercase text-[10px]">
+              2. Scientific Meaning
+            </p>
+            <p className="text-slate-200 leading-tight mt-0.5">{dataset.scientificInterpretation}</p>
+          </div>
+          <div className="rounded-xl bg-[#0B1222] border border-[#9BD8A7]/35 px-2 py-1">
+            <p className="font-extrabold text-[#9BD8A7] uppercase text-[10px]">
+              3. Base Simulation Rule
+            </p>
+            <p className="text-slate-200 leading-tight mt-0.5">{dataset.gameSimulationRule}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl bg-[#11192E] border border-[#79C8E8]/40 p-3 text-xs text-slate-200 space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -44,6 +84,20 @@ export const NasaDataBadge: React.FC<NasaDataBadgeProps> = ({ day }) => {
         <p className="font-extrabold text-[#9BD8A7] uppercase">3. Game Simulation Rule</p>
         <p>{dataset.gameSimulationRule}</p>
       </div>
+      {onTermClick ? (
+        <div className="pt-1 flex flex-wrap gap-1.5">
+          {dataset.rawMetrics.slice(0, 2).map((metric) => (
+            <button
+              key={metric.label}
+              type="button"
+              onClick={() => onTermClick(metric.label)}
+              className="px-2 py-0.5 rounded-md bg-[#1E293B] border border-slate-600 text-[10px] font-bold text-[#79C8E8] hover:border-[#FFD66B] cursor-pointer"
+            >
+              {metric.label}: {metric.value}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -58,24 +112,249 @@ const FEATURED_CREW_BY_DAY: Record<DayNumber, OnBaseCrewId> = {
   7: 'albaraa',
 };
 
-const SHORT_NASA_FACTS: Record<DayNumber, string> = {
-  1: 'NASA LRO shows South Pole peaks stay sunny while deep craters trap ancient ice!',
-  2: 'NASA ISS Veggie grows space lettuce using water wicks that climb without electric pumps!',
-  3: 'Sharp lunar dust clings to solar panels, so stored battery power saves missions overnight!',
-  4: 'NASA satellites warn bases when solar flares shoot radiation storms toward the Moon!',
-  5: 'NASA Human Research shows restful sleep keeps astronauts calm and prevents costly errors!',
-  6: 'NASA Artemis rovers scout cold crater shadows for frozen water used as air and rocket fuel!',
-  7: 'Solar blasts can block Earth radio, so Moon crews keep backup power and dishes ready!',
-};
-
-interface CompactChoiceCard {
-  id: string;
+interface ChoiceVisualMeta {
   icon: string;
-  title: string;
-  summary: string;
-  deltas: ResourceDeltas;
-  accent: 'sky' | 'amber' | 'mint' | 'purple';
-  onSelect: () => void;
+  baseImpact: string;
+  crewImpact: string;
+  endingHint: string;
+  isRisky?: boolean;
+}
+
+function getChoiceVisualMeta(
+  choiceId: ChoiceId,
+  state: Readonly<GameState>,
+): ChoiceVisualMeta {
+  switch (choiceId) {
+    case '1A_sunlit_ridge':
+      return {
+        icon: '☀️',
+        baseImpact: 'Base: Extra Solar Wings (+6 Power/day)',
+        crewImpact: 'Crew: Open Sky (-10 Storm Shield)',
+        endingHint: 'Path: High kW for Active Pumps & Labs',
+      };
+    case '1B_crater_shadow':
+      return {
+        icon: '🌑',
+        baseImpact: 'Base: Crater Rock Berm & Ice Rim',
+        crewImpact: 'Crew: +10 Storm Shield, -4 Power/day',
+        endingHint: 'Path: Safer Radiation & Water Surplus',
+      };
+    case '2A_active_pumps':
+      return {
+        icon: '⚡',
+        baseImpact: 'Base: Powered Hydroponic Loops (-8 kW/day)',
+        crewImpact: 'Crew: Fast Greens (+8 Air & Food/day)',
+        endingHint: 'Path: Stalls if Power drops below 25%',
+      };
+    case '2B_capillary_ponds':
+      return {
+        icon: '🌱',
+        baseImpact: 'Base: 0 kW Capillary Wicking Blocks',
+        crewImpact: 'Crew: Hand Tending (+8 Fatigue/day)',
+        endingHint: 'Path: Saves kW, Needs Fatigue Rotation',
+      };
+    case '3A_essential_heating':
+      return {
+        icon: '🔥',
+        baseImpact: 'Base: Warm Cabins, Rover Capped at 55%',
+        crewImpact: 'Crew: Cozy Quarters (+5 Morale)',
+        endingHint: 'Path: No Battery Buffer for Sol 4 Storm',
+      };
+    case '3B_battery_storage':
+      return {
+        icon: '🔋',
+        baseImpact: 'Base: 100% Rover & Storm Battery Bank',
+        crewImpact: 'Crew: Frosty Rooms (+15 Fatigue Sol 4)',
+        endingHint: 'Path: Top Science & Storm Buffer',
+      };
+    case '3C_overclock_regulators':
+      return {
+        icon: '⚙️',
+        baseImpact: 'Base: Overdriven Bus (+Sol 7 Fault Risk)',
+        crewImpact: 'Crew: High Strain (+15 Fatigue, -10 Morale)',
+        endingHint: 'Path: Risky Surge — Hurts Sol 7 Power',
+        isRisky: true,
+      };
+    case '4A_max_shielding': {
+      const overload =
+        state.flags.farmingMode === 'active_pumps' &&
+        state.flags.day3Allocation !== 'battery_storage';
+      return {
+        icon: '🛡️',
+        baseImpact: overload
+          ? 'Base: Bus Overload! Active Pumps Stall'
+          : 'Base: Shimmering H2O Water-Wall Dome',
+        crewImpact: 'Crew: Internal mSv Safely Blocked',
+        endingHint: overload
+          ? 'Warning: Power drops below 25%!'
+          : 'Path: Protects Crew & Science Output',
+        isRisky: overload,
+      };
+    }
+    case '4B_partial_shielding':
+      return {
+        icon: '⚠️',
+        baseImpact: 'Base: Half Shutters Save -15 kW Today',
+        crewImpact: 'Crew: Radiation Strain (-10 Medkits Sol 5)',
+        endingHint: 'Path: Survival Risk — Cuts Shield & Health',
+        isRisky: true,
+      };
+    case '5A_full_rest':
+      return {
+        icon: '🌙',
+        baseImpact: 'Base: 600 nm Amber Rest Lights (-8 Shield pause)',
+        crewImpact: 'Crew: Deep Recovery (+Crisis Resilience)',
+        endingHint: 'Path: Boosts Sol 7 Morale (+5)',
+      };
+    case '5B_rationed_split_shift':
+      return {
+        icon: '🔬',
+        baseImpact: 'Base: Night Lab Scopes Active (+10 Science)',
+        crewImpact: 'Crew: Saves Medkits, Lingering Fatigue',
+        endingHint: 'Path: -8 Morale Entering Sol 7',
+      };
+    case '6A_crater_ice':
+      return {
+        icon: '🧊',
+        baseImpact: 'Base: +25 Water Tank, Relay Left Unserviced',
+        crewImpact: 'Crew: Heavy -45% Rover Drain',
+        endingHint: 'Path: Huge +25 Science Score Boost',
+      };
+    case '6B_comms_maintenance':
+      return {
+        icon: '📡',
+        baseImpact: 'Base: Emergency S-Band Relay Reinforced',
+        crewImpact: 'Crew: Clean Solar & Shield Check',
+        endingHint: 'Path: Unlocks +10 kW Sol 7 Dish Lock',
+      };
+    case '7_1A_rover_bus_tap':
+      return {
+        icon: '🔋',
+        baseImpact: 'Base: Rover Auxiliary Bus Linked (+15 kW)',
+        crewImpact: 'Crew: Clean Air & Zero Extra Fatigue',
+        endingHint: 'Stage 1: Strongest Power Rescue',
+      };
+    case '7_1B_manual_bypass':
+      return {
+        icon: '🔧',
+        baseImpact: state.flags.hardwareFaultRisk
+          ? 'Base: Sol 3 Overclock Fault (-8 Shield!)'
+          : 'Base: Hand-Wired Junction (+5 kW)',
+        crewImpact: 'Crew: Heavy Exhaustion (+10 Fatigue)',
+        endingHint: 'Stage 1: Spares Rover Battery',
+        isRisky: state.flags.hardwareFaultRisk,
+      };
+    case '7_2A_medbay_o2_divert':
+      return {
+        icon: '🫧',
+        baseImpact: 'Base: Greenhouse O2 Loop Restored (+15 Air)',
+        crewImpact: state.flags.crisisResilience
+          ? 'Crew: Crisis Resilience (+15 Morale!)'
+          : 'Crew: Calmer Breathing (+10 Morale)',
+        endingHint: 'Stage 2: +10 Science Breakthrough Boost',
+      };
+    case '7_2B_seal_greenhouse':
+      return {
+        icon: '🚪',
+        baseImpact: 'Base: Outer Plant Bay Sealed (-15 Food)',
+        crewImpact: 'Crew: Rationed Air (-8 Morale)',
+        endingHint: 'Stage 2: Saves Medkits, -5 Science',
+        isRisky: true,
+      };
+    case '7_3A_phased_array_lock':
+      return {
+        icon: '📡',
+        baseImpact: state.flags.relayReinforced
+          ? 'Base: Reinforced Dish Lock (+10 kW!)'
+          : 'Base: Heavy Array Draw (-15 kW)',
+        crewImpact: 'Crew: Earth Uplink Restored Fast',
+        endingHint: state.flags.relayReinforced
+          ? 'Stage 3: +15 Science Breakthrough Lock!'
+          : 'Stage 3: +10 Science, Watch Low Power',
+        isRisky: !state.flags.relayReinforced && state.primary.power < 30,
+      };
+    case '7_3B_emergency_beacon':
+      return {
+        icon: '🛟',
+        baseImpact: 'Base: Low-Power Pulse (-5 kW)',
+        crewImpact: 'Crew: Safe Steady Recovery (+5 Morale)',
+        endingHint: 'Stage 3: Reliable Safe Ending Finish',
+      };
+    default: {
+      const _exhaustive: never = choiceId;
+      return _exhaustive;
+    }
+  }
+}
+
+function getEffectiveDeltas(
+  state: Readonly<GameState>,
+  opt: DecisionOptionSpec,
+): ResourceDeltas {
+  const { choiceId, immediateDeltas } = opt;
+
+  if (choiceId === '4A_max_shielding') {
+    const siteMod =
+      state.flags.landingSite === 'crater_shadow'
+        ? 10
+        : state.flags.landingSite === 'sunlit_ridge'
+          ? -10
+          : 0;
+    const overload =
+      state.flags.farmingMode === 'active_pumps' &&
+      state.flags.day3Allocation !== 'battery_storage';
+    if (overload) {
+      const raw = Math.min(state.primary.power - 45, 20);
+      const targetPower =
+        state.primary.power >= 35 ? Math.max(10, raw) : Math.max(0, raw);
+      return {
+        shielding: 15 + siteMod,
+        crewReadiness: 5,
+        power: targetPower - state.primary.power,
+        lifeSupport: state.flags.activePumpsStalled ? 0 : -15,
+      };
+    }
+    return {
+      shielding: 15 + siteMod,
+      crewReadiness: 5,
+      power: -25,
+    };
+  }
+
+  if (choiceId === '4B_partial_shielding') {
+    const siteMod =
+      state.flags.landingSite === 'crater_shadow'
+        ? 10
+        : state.flags.landingSite === 'sunlit_ridge'
+          ? -10
+          : 0;
+    return {
+      ...immediateDeltas,
+      shielding: -20 + siteMod,
+    };
+  }
+
+  if (choiceId === '7_1B_manual_bypass') {
+    return {
+      ...immediateDeltas,
+      shielding: state.flags.hardwareFaultRisk ? -8 : 0,
+    };
+  }
+
+  if (choiceId === '7_2A_medbay_o2_divert') {
+    return {
+      ...immediateDeltas,
+      crewReadiness: 10 + (state.flags.crisisResilience ? 5 : 0),
+    };
+  }
+
+  if (choiceId === '7_3A_phased_array_lock') {
+    return state.flags.relayReinforced
+      ? { power: 10, shielding: 10, scienceScore: 15 }
+      : { power: -15, shielding: 5, scienceScore: 10 };
+  }
+
+  return immediateDeltas;
 }
 
 interface MeterPill {
@@ -85,56 +364,19 @@ interface MeterPill {
   delta: number;
 }
 
-function getChoiceIcon(choiceId: ChoiceId): string {
-  switch (choiceId) {
-    case '1A_sunlit_ridge':
-      return '☀️';
-    case '1B_crater_shadow':
-      return '🌑';
-    case '2A_active_pumps':
-      return '⚡';
-    case '2B_capillary_ponds':
-      return '🌱';
-    case '3A_essential_heating':
-      return '🔥';
-    case '3B_battery_storage':
-      return '🔋';
-    case '3C_overclock_regulators':
-      return '⚙️';
-    case '4A_max_shielding':
-      return '🛡️';
-    case '4B_partial_shielding':
-      return '⚠️';
-    case '5A_full_rest':
-      return '🎬';
-    case '5B_rationed_split_shift':
-      return '🔬';
-    case '6A_crater_ice':
-      return '🧊';
-    case '6B_comms_maintenance':
-      return '📡';
-    case '7_1A_rover_bus_tap':
-    case '7_2A_medbay_o2_divert':
-    case '7_3A_phased_array_lock':
-      return '📡';
-    case '7_1B_manual_bypass':
-    case '7_2B_seal_greenhouse':
-    case '7_3B_emergency_beacon':
-      return '🛡️';
-    default: {
-      const _exhaustive: never = choiceId;
-      return _exhaustive;
-    }
-  }
-}
-
 function buildDeltaPills(deltas: ResourceDeltas): MeterPill[] {
   const specs: Array<{ key: keyof ResourceDeltas; icon: string; label: string }> = [
     { key: 'power', icon: '⚡', label: 'Power' },
-    { key: 'lifeSupport', icon: '💧', label: 'Air' },
+    { key: 'waterAvailability', icon: '💧', label: 'Water' },
+    { key: 'lifeSupport', icon: '🫧', label: 'O2/Air' },
     { key: 'shielding', icon: '🛡️', label: 'Shield' },
     { key: 'crewReadiness', icon: '😊', label: 'Morale' },
     { key: 'scienceScore', icon: '🔬', label: 'Science' },
+    { key: 'foodAndSupplies', icon: '🌿', label: 'Food' },
+    { key: 'medicalSupplies', icon: '🩺', label: 'Medkits' },
+    { key: 'roverBattery', icon: '🔋', label: 'Rover' },
+    { key: 'crewHealth', icon: '❤️', label: 'Health' },
+    { key: 'crewFatigue', icon: '😓', label: 'Fatigue' },
   ];
 
   const pills: MeterPill[] = [];
@@ -149,26 +391,7 @@ function buildDeltaPills(deltas: ResourceDeltas): MeterPill[] {
       });
     }
   }
-  if (pills.length === 0) {
-    const fallbackSpecs: Array<{ key: keyof ResourceDeltas; icon: string; label: string }> = [
-      { key: 'waterAvailability', icon: '💧', label: 'Water' },
-      { key: 'foodAndSupplies', icon: '🌿', label: 'Food' },
-      { key: 'medicalSupplies', icon: '🩺', label: 'Medkits' },
-      { key: 'roverBattery', icon: '🔋', label: 'Rover' },
-    ];
-    for (const spec of fallbackSpecs) {
-      const val = deltas[spec.key];
-      if (typeof val === 'number' && val !== 0) {
-        pills.push({
-          key: spec.key,
-          icon: spec.icon,
-          label: spec.label,
-          delta: val,
-        });
-      }
-    }
-  }
-  return pills.slice(0, 4);
+  return pills.slice(0, 5);
 }
 
 export interface DecisionModalProps {
@@ -186,130 +409,95 @@ export const DecisionModal: React.FC<DecisionModalProps> = ({
   onOpenAiAdvisor,
   onDecisionComplete,
 }) => {
-  const [showNasaFact, setShowNasaFact] = useState(false);
-
-  const featuredCrewId = FEATURED_CREW_BY_DAY[state.day];
-  const crewProfile = CREW_PROFILES[featuredCrewId];
-  const scenario = DAILY_SCENARIOS[state.day];
   const isDay7 = state.day === 7;
   const isBlackout = isDay7 && state.commsBlackout;
+  const activeDay7Stage: 1 | 2 | 3 = !state.day7StagesCompleted.stage1
+    ? 1
+    : !state.day7StagesCompleted.stage2
+      ? 2
+      : 3;
 
-  const cards: CompactChoiceCard[] = useMemo(() => {
+  const scenario = DAILY_SCENARIOS[state.day];
+  const stageSpec = DAY7_STAGE_SPECS[activeDay7Stage];
+
+  const featuredCrewId: OnBaseCrewId = isDay7
+    ? activeDay7Stage === 1
+      ? 'albaraa'
+      : activeDay7Stage === 2
+        ? 'sayed'
+        : 'taha'
+    : FEATURED_CREW_BY_DAY[state.day];
+  const crewProfile = CREW_PROFILES[featuredCrewId];
+  const storyRipple = getDynamicStoryRipple(state);
+
+  const activeOptions: readonly DecisionOptionSpec[] = useMemo(() => {
     if (!isDay7) {
-      const filteredOptions: DecisionOptionSpec[] = scenario.options
-        .filter((opt) => opt.choiceId !== '3C_overclock_regulators')
-        .slice(0, 2);
+      return scenario.options;
+    }
+    return stageSpec.options;
+  }, [isDay7, scenario.options, stageSpec.options]);
 
-      return filteredOptions.map((opt) => ({
-        id: opt.choiceId,
-        icon: getChoiceIcon(opt.choiceId),
-        title: opt.label,
-        summary: opt.shortSummary,
-        deltas: opt.immediateDeltas,
-        accent: opt.badgeColor,
-        onSelect: () => {
-          const completedDay = state.day;
-          soundEngine.playCue('confirm');
-          dispatch({ kind: 'APPLY_EVENING_DECISION', choiceId: opt.choiceId });
-          dispatch({ kind: 'ADVANCE_SHIFT' });
-          if (onDecisionComplete) {
-            onDecisionComplete(completedDay);
-          } else {
-            onClose();
-          }
-        },
-      }));
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        soundEngine.playCue('click');
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const handleSelectOption = (opt: DecisionOptionSpec) => {
+    if (opt.requires && !opt.requires.check(state)) {
+      soundEngine.playCue('alert');
+      return;
     }
 
-    const canTapRover = state.sub.roverBattery >= 30;
-    const canDivertO2 = state.sub.medicalSupplies >= 20;
+    const meta = getChoiceVisualMeta(opt.choiceId, state);
+    if (opt.choiceId === '3B_battery_storage') {
+      soundEngine.playCue('frost_freeze');
+    } else if (opt.choiceId === '3C_overclock_regulators' || meta.isRisky) {
+      soundEngine.playCue('power_overload');
+    } else {
+      soundEngine.playCue('choice_impact');
+    }
 
-    const beaconDeltas: ResourceDeltas = {
-      power:
-        (canTapRover ? 15 : 5) +
-        (state.flags.relayReinforced ? 10 : -15),
-      lifeSupport: (canTapRover ? 5 : 0) + (canDivertO2 ? 15 : 5),
-      shielding: (canTapRover ? 0 : state.flags.hardwareFaultRisk ? -8 : 0) + (state.flags.relayReinforced ? 10 : 5),
-      crewReadiness: canTapRover
-        ? canDivertO2
-          ? 10 + (state.flags.crisisResilience ? 5 : 0)
-          : -8
-        : -10,
-      scienceScore: (canDivertO2 ? 10 : -5) + (state.flags.relayReinforced ? 15 : 10),
-    };
+    if (!isDay7) {
+      const completedDay = state.day;
+      dispatch({ kind: 'APPLY_EVENING_DECISION', choiceId: opt.choiceId });
+      dispatch({ kind: 'ADVANCE_SHIFT' });
+      if (onDecisionComplete) {
+        onDecisionComplete(completedDay);
+      } else {
+        onClose();
+      }
+      return;
+    }
 
-    const shelterDeltas: ResourceDeltas = {
-      power: 0,
-      lifeSupport: 5,
-      shielding: 5 + (state.flags.hardwareFaultRisk ? -8 : 0),
-      crewReadiness: -13,
-      scienceScore: -5,
-    };
+    dispatch({
+      kind: 'APPLY_DAY7_STAGE_DECISION',
+      stage: activeDay7Stage,
+      choiceId: opt.choiceId,
+    });
 
-    return [
-      {
-        id: 'day7_card_a',
-        icon: '📡',
-        title: 'Launch Science Beacon',
-        summary: 'Boost full array power for maximum science.',
-        deltas: beaconDeltas,
-        accent: 'sky',
-        onSelect: () => {
-          soundEngine.playCue('confirm');
-          const s1: ChoiceId = canTapRover ? '7_1A_rover_bus_tap' : '7_1B_manual_bypass';
-          const s2: ChoiceId = canDivertO2 ? '7_2A_medbay_o2_divert' : '7_2B_seal_greenhouse';
-          const s3: ChoiceId = '7_3A_phased_array_lock';
-          dispatch({ kind: 'APPLY_DAY7_STAGE_DECISION', stage: 1, choiceId: s1 });
-          dispatch({ kind: 'APPLY_DAY7_STAGE_DECISION', stage: 2, choiceId: s2 });
-          dispatch({ kind: 'APPLY_DAY7_STAGE_DECISION', stage: 3, choiceId: s3 });
-          dispatch({ kind: 'ADVANCE_SHIFT' });
-          if (onDecisionComplete) {
-            onDecisionComplete(7);
-          } else {
-            onClose();
-          }
-        },
-      },
-      {
-        id: 'day7_card_b',
-        icon: '🛡️',
-        title: 'Safe Shelter Mode',
-        summary: 'Save cabin power and hold steady safely.',
-        deltas: shelterDeltas,
-        accent: 'mint',
-        onSelect: () => {
-          soundEngine.playCue('confirm');
-          dispatch({
-            kind: 'APPLY_DAY7_STAGE_DECISION',
-            stage: 1,
-            choiceId: '7_1B_manual_bypass',
-          });
-          dispatch({
-            kind: 'APPLY_DAY7_STAGE_DECISION',
-            stage: 2,
-            choiceId: '7_2B_seal_greenhouse',
-          });
-          dispatch({
-            kind: 'APPLY_DAY7_STAGE_DECISION',
-            stage: 3,
-            choiceId: '7_3B_emergency_beacon',
-          });
-          dispatch({ kind: 'ADVANCE_SHIFT' });
-          if (onDecisionComplete) {
-            onDecisionComplete(7);
-          } else {
-            onClose();
-          }
-        },
-      },
-    ];
-  }, [dispatch, isDay7, onClose, onDecisionComplete, scenario.options, state.day, state.flags.crisisResilience, state.flags.hardwareFaultRisk, state.flags.relayReinforced, state.sub.medicalSupplies, state.sub.roverBattery]);
+    if (activeDay7Stage === 3) {
+      dispatch({ kind: 'ADVANCE_SHIFT' });
+      if (onDecisionComplete) {
+        onDecisionComplete(7);
+      } else {
+        onClose();
+      }
+    }
+  };
 
-  const questionText = isDay7
-    ? 'Earth radio is out! Pick how our Moon base handles Day 7.'
-    : scenario.eveningPrompt;
+  const questionText = isDay7 ? stageSpec.prompt : scenario.eveningPrompt;
 
-  const accentClasses: Record<CompactChoiceCard['accent'], { border: string; badge: string; btn: string }> = {
+  const accentClasses: Record<
+    DecisionOptionSpec['badgeColor'],
+    { border: string; badge: string; btn: string }
+  > = {
     sky: {
       border: 'border-[#79C8E8]/60 hover:border-[#79C8E8]',
       badge: 'bg-[#79C8E8]/15 text-[#79C8E8]',
@@ -332,122 +520,234 @@ export const DecisionModal: React.FC<DecisionModalProps> = ({
     },
   };
 
+  const gridColsClass =
+    activeOptions.length >= 3
+      ? 'grid-cols-1 md:grid-cols-3 gap-2.5'
+      : 'grid-cols-1 md:grid-cols-2 gap-3';
+
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-[#090D16]/80 backdrop-blur-sm p-4 select-none"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-[#090D16]/82 backdrop-blur-sm p-3 select-none"
       role="dialog"
       aria-modal="true"
       aria-labelledby="decision-modal-question"
     >
-      <div className="w-full max-w-3xl rounded-3xl bg-[#0F172A] border-2 border-[#79C8E8]/60 shadow-2xl p-5 sm:p-6 flex flex-col gap-4">
-        {/* Top Header: Crew Avatar + 1 Short Question */}
-        <div className="flex items-center gap-4 rounded-2xl bg-[#1E293B] border border-slate-700 p-3.5">
-          <div
-            className="p-1.5 rounded-2xl bg-[#0F172A] border-2 shrink-0"
-            style={{ borderColor: crewProfile.accentColor }}
-          >
-            <CrewAvatar
-              crewId={featuredCrewId}
-              expression={isDay7 ? 'alert' : 'focused'}
-              size="md"
-            />
-          </div>
-          <div className="min-w-0 flex-1">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-[#79C8E8]">
-              DAY {state.day} CHOICE • {crewProfile.name}
-            </span>
-            <h2
-              id="decision-modal-question"
-              className="text-xl font-bold text-[#F8FAFC] leading-snug mt-0.5"
-              style={{ fontFamily: 'Fredoka, Nunito, sans-serif' }}
+      <div className="w-full max-w-5xl max-h-[95vh] overflow-hidden rounded-3xl bg-[#0F172A] border-2 border-[#79C8E8]/60 shadow-2xl p-3 sm:p-3.5 flex flex-col gap-2">
+        {/* Top Header: Crew Avatar + Prompt + Story Ripple */}
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#1E293B] border border-slate-700 px-3 py-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className="p-1 rounded-2xl bg-[#0F172A] border-2 shrink-0"
+              style={{ borderColor: crewProfile.accentColor }}
             >
-              {questionText}
-            </h2>
+              <CrewAvatar
+                crewId={featuredCrewId}
+                expression={isDay7 ? 'alert' : 'focused'}
+                size="sm"
+              />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#79C8E8]">
+                  Sol {state.day} Decision • {crewProfile.name}
+                </span>
+                <span className="text-[11px] font-bold text-[#A995E8] truncate">
+                  • {storyRipple}
+                </span>
+              </div>
+              <h2
+                id="decision-modal-question"
+                className="text-base sm:text-lg font-extrabold text-[#F8FAFC] leading-snug mt-0.5"
+                style={{ fontFamily: 'Fredoka, Nunito, sans-serif' }}
+              >
+                {questionText}
+              </h2>
+            </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.playCue('click');
+              onClose();
+            }}
+            aria-label="Close decision modal"
+            className="w-8 h-8 rounded-xl bg-[#0F172A] hover:bg-slate-800 border border-slate-600 text-slate-300 hover:text-[#F8FAFC] font-extrabold text-sm cursor-pointer shrink-0 flex items-center justify-center transition-colors"
+          >
+            ✕
+          </button>
         </div>
 
-        {/* Strictly 2 Big Side-by-Side Choice Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {cards.map((card) => {
-            const theme = accentClasses[card.accent];
-            const pills = buildDeltaPills(card.deltas);
+        {/* Day 7 Sequential 3-Stage Stepper */}
+        {isDay7 ? (
+          <div
+            className="grid grid-cols-3 gap-2"
+            aria-label="Sol 7 autonomous recovery stages"
+          >
+            {([1, 2, 3] as const).map((stageNum) => {
+              const spec = DAY7_STAGE_SPECS[stageNum];
+              const isDone =
+                stageNum === 1
+                  ? state.day7StagesCompleted.stage1
+                  : stageNum === 2
+                    ? state.day7StagesCompleted.stage2
+                    : state.day7StagesCompleted.stage3;
+              const isActive = stageNum === activeDay7Stage && !isDone;
+              return (
+                <div
+                  key={stageNum}
+                  className={`rounded-xl px-2.5 py-1.5 border text-xs font-extrabold flex items-center justify-between gap-1.5 ${
+                    isDone
+                      ? 'bg-[#9BD8A7]/15 border-[#9BD8A7]/60 text-[#9BD8A7]'
+                      : isActive
+                        ? 'bg-[#FFD66B]/15 border-[#FFD66B] text-[#FFD66B]'
+                        : 'bg-[#11192E] border-slate-700 text-slate-400'
+                  }`}
+                >
+                  <span className="truncate">
+                    {isDone ? '✓ ' : `${stageNum}. `}
+                    {spec.title}
+                  </span>
+                  <span className="text-[10px] uppercase shrink-0">
+                    {isDone ? 'Done' : isActive ? 'Now' : 'Next'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {/* Restored 3-Box NASA Data Badge Strip (ADR-0004) */}
+        <NasaDataBadge day={state.day} compact />
+
+        {/* Option Cards (2 cards normally, 3 cards on Day 3) */}
+        <div className={`grid ${gridColsClass} min-h-0`}>
+          {activeOptions.map((opt) => {
+            const theme = accentClasses[opt.badgeColor];
+            const meta = getChoiceVisualMeta(opt.choiceId, state);
+            const effectiveDeltas = getEffectiveDeltas(state, opt);
+            const pills = buildDeltaPills(effectiveDeltas);
+            const requirementUnmet = opt.requires ? !opt.requires.check(state) : false;
+
             return (
               <div
-                key={card.id}
-                className={`rounded-2xl bg-[#11192E] border-2 ${theme.border} p-4 flex flex-col justify-between gap-4 transition-colors`}
+                key={opt.choiceId}
+                className={`rounded-2xl bg-[#11192E] border-2 ${
+                  requirementUnmet
+                    ? 'border-slate-700 opacity-75'
+                    : meta.isRisky
+                      ? 'border-[#F87171]/70 hover:border-[#F87171]'
+                      : theme.border
+                } p-2.5 flex flex-col justify-between gap-1.5 transition-colors`}
               >
-                <div className="flex flex-col gap-2.5">
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`w-12 h-12 rounded-2xl ${theme.badge} flex items-center justify-center text-3xl shrink-0`}
-                      aria-hidden="true"
-                    >
-                      {card.icon}
-                    </span>
-                    <h3
-                      className="text-xl font-extrabold text-[#F8FAFC] leading-tight"
-                      style={{ fontFamily: 'Fredoka, Nunito, sans-serif' }}
-                    >
-                      {card.title}
-                    </h3>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`w-8 h-8 rounded-xl ${theme.badge} flex items-center justify-center text-lg shrink-0`}
+                        aria-hidden="true"
+                      >
+                        {meta.icon}
+                      </span>
+                      <h3
+                        className="text-sm sm:text-base font-extrabold text-[#F8FAFC] leading-tight"
+                        style={{ fontFamily: 'Fredoka, Nunito, sans-serif' }}
+                      >
+                        {opt.label}
+                      </h3>
+                    </div>
+
+                    {opt.requires ? (
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border shrink-0 ${
+                          requirementUnmet
+                            ? 'bg-[#F87171]/15 border-[#F87171]/70 text-[#F87171]'
+                            : 'bg-[#9BD8A7]/15 border-[#9BD8A7]/60 text-[#9BD8A7]'
+                        }`}
+                      >
+                        {requirementUnmet ? `🔒 ${opt.requires.label}` : `✓ ${opt.requires.label}`}
+                      </span>
+                    ) : null}
                   </div>
 
-                  <p className="text-sm font-bold text-slate-200 leading-snug">
-                    {card.summary}
+                  <p className="text-xs font-bold text-slate-200 leading-tight">
+                    {opt.shortSummary}
                   </p>
 
-                  <div className="flex flex-wrap gap-1.5 pt-1">
+                  {/* Base Impact & Crew Impact Badges */}
+                  <div
+                    className={`grid gap-1 text-[11px] font-bold ${
+                      activeOptions.length >= 3 ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'
+                    }`}
+                  >
+                    <div className="rounded-lg bg-[#0B1222] border border-slate-700/80 px-2 py-1 text-[#79C8E8] leading-tight">
+                      🏗️ {meta.baseImpact}
+                    </div>
+                    <div className="rounded-lg bg-[#0B1222] border border-slate-700/80 px-2 py-1 text-[#FFD66B] leading-tight">
+                      👩‍🚀 {meta.crewImpact}
+                    </div>
+                  </div>
+
+                  {/* Visual Metric Impact Pills */}
+                  <div className="flex flex-wrap gap-1">
                     {pills.map((pill) => {
-                      const positive = pill.delta > 0;
+                      const isFatigue = pill.key === 'crewFatigue';
+                      const good = isFatigue ? pill.delta < 0 : pill.delta > 0;
                       return (
                         <span
                           key={pill.key}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-extrabold border flex items-center gap-1 ${
-                            positive
+                          className={`px-1.5 py-0.5 rounded-md text-[10.5px] font-extrabold border flex items-center gap-1 ${
+                            good
                               ? 'bg-[#9BD8A7]/15 border-[#9BD8A7]/50 text-[#9BD8A7]'
                               : 'bg-[#F87171]/15 border-[#F87171]/50 text-[#F87171]'
                           }`}
                         >
                           <span aria-hidden="true">{pill.icon}</span>
                           <span>
-                            {pill.label} {positive ? `+${pill.delta}` : pill.delta}
+                            {pill.label} {pill.delta > 0 ? `+${pill.delta}` : pill.delta}
                           </span>
                         </span>
                       );
                     })}
                   </div>
+
+                  {/* Ending Path Hint */}
+                  <div className="text-[11px] font-bold text-[#A995E8] leading-tight">
+                    🧭 {meta.endingHint}
+                  </div>
                 </div>
 
                 <button
                   type="button"
-                  onClick={card.onSelect}
-                  className={`w-full py-3.5 px-4 rounded-xl text-base font-extrabold tracking-wide shadow-md cursor-pointer transition-colors ${theme.btn}`}
+                  disabled={requirementUnmet}
+                  onClick={() => handleSelectOption(opt)}
+                  className={`w-full py-2 px-3 rounded-xl text-sm font-extrabold tracking-wide shadow-md transition-colors ${
+                    requirementUnmet
+                      ? 'bg-slate-800 text-slate-400 border border-slate-600 cursor-not-allowed'
+                      : `${theme.btn} cursor-pointer`
+                  }`}
                   style={{ fontFamily: 'Fredoka, Nunito, sans-serif' }}
                 >
-                  CHOOSE THIS →
+                  {requirementUnmet
+                    ? `LOCKED (${opt.requires?.label ?? 'Requirement Unmet'})`
+                    : isDay7
+                      ? `LOCK STAGE ${activeDay7Stage} →`
+                      : 'CHOOSE THIS →'}
                 </button>
               </div>
             );
           })}
         </div>
 
-        {/* Compact Optional 1-Sentence NASA Fact Drawer */}
-        {showNasaFact ? (
-          <div className="rounded-xl bg-[#11192E] border border-[#FFD66B]/40 px-4 py-2.5 text-sm font-bold text-slate-100 flex items-center gap-2">
-            <span aria-hidden="true">🛰️</span>
-            <span>{SHORT_NASA_FACTS[state.day]}</span>
-          </div>
-        ) : null}
-
-        {/* Bottom Footer: Ask Earth Control + Optional Tiny NASA Fact Pill */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800">
+        {/* Bottom Footer: Earth Uplink + Live Readiness Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-800">
           <button
             type="button"
             onClick={() => {
-              soundEngine.playCue(isBlackout ? 'static_burst' : 'radio_ping');
+              soundEngine.playCue(isBlackout ? 'comms_static' : 'radio_ping');
               onOpenAiAdvisor();
             }}
-            className={`px-4 py-2 rounded-xl border text-sm font-extrabold flex items-center gap-2 cursor-pointer transition-colors ${
+            className={`px-3.5 py-1.5 rounded-xl border text-xs sm:text-sm font-extrabold flex items-center gap-2 cursor-pointer transition-colors ${
               isBlackout
                 ? 'bg-[#2A1119] border-[#F87171]/80 text-[#F87171] hover:bg-[#381621]'
                 : 'bg-[#1E293B] border-[#79C8E8]/50 text-[#79C8E8] hover:bg-slate-800'
@@ -456,23 +756,25 @@ export const DecisionModal: React.FC<DecisionModalProps> = ({
             <span aria-hidden="true">{isBlackout ? '⚡' : '📞'}</span>
             <span>
               {isBlackout
-                ? 'RADIO BLACKOUT! Earth is offline—you decide!'
-                : 'Ask Earth Control (1-Sentence Hint)'}
+                ? 'COMMS BLACKOUT — Inspect Static Screen'
+                : 'Ask Abdul — Earth Uplink (2.6s Delay)'}
             </span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              soundEngine.playCue('click');
-              setShowNasaFact((prev) => !prev);
-            }}
-            aria-expanded={showNasaFact}
-            className="px-3.5 py-2 rounded-xl bg-[#1E293B] hover:bg-slate-800 border border-slate-600 text-xs font-extrabold text-[#FFD66B] flex items-center gap-1.5 cursor-pointer transition-colors"
-          >
-            <span aria-hidden="true">📡</span>
-            <span>{showNasaFact ? 'Hide NASA Fact' : 'NASA Fact'}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] font-extrabold text-slate-200">
+            <span className="px-2.5 py-1 rounded-lg bg-[#11192E] border border-slate-700">
+              💧 Water: {Math.round(state.sub.waterAvailability)}%
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-[#11192E] border border-slate-700">
+              🔋 Rover: {Math.round(state.sub.roverBattery)}%
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-[#11192E] border border-slate-700">
+              🩺 Medkits: {Math.round(state.sub.medicalSupplies)}%
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-[#11192E] border border-[#A995E8]/50 text-[#A995E8]">
+              🔬 Science: {Math.round(state.sub.scienceScore)} / 75
+            </span>
+          </div>
         </div>
       </div>
     </div>

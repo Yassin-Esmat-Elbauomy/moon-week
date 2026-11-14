@@ -3,11 +3,12 @@ import {
   BASE_CANVAS_HEIGHT,
   BASE_CANVAS_WIDTH,
   drawTopDownBase,
-  getFeaturedDayTarget,
+  getActiveDayTarget,
   getFeaturedGuideWaypoints,
   ROOM_BOUNDS,
   ROOM_ORDER,
   type GuidePoint,
+  type MissionPhase,
 } from '../../assets/proceduralPixelArt';
 import { playCue, unlock } from '../../services/soundEngine';
 import type { CrewId, GameAction, GameState, MiniGameId, RoomId } from '../../types/game';
@@ -19,6 +20,7 @@ export interface TopDownLunarBaseProps {
   onOpenMiniGame: (miniGame: MiniGameId) => void;
   onOpenDecisionModal: () => void;
   isOverlayOpen?: boolean;
+  missionPhase?: MissionPhase;
 }
 
 const COMMANDER_SPAWN: GuidePoint = { x: 556, y: 458 };
@@ -90,8 +92,9 @@ export const TopDownLunarBase: React.FC<TopDownLunarBaseProps> = ({
   state,
   onTalkToCrew,
   isOverlayOpen = false,
+  missionPhase = 'morning',
 }) => {
-  const featured = getFeaturedDayTarget(state.day);
+  const featured = getActiveDayTarget(state.day, missionPhase, state);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [hoveredRoom, setHoveredRoom] = useState<RoomId | null>(null);
 
@@ -110,21 +113,26 @@ export const TopDownLunarBase: React.FC<TopDownLunarBaseProps> = ({
 
   const stateRef = useRef(state);
   const featuredRef = useRef(featured);
+  const missionPhaseRef = useRef(missionPhase);
   const isOverlayOpenRef = useRef(isOverlayOpen);
   const hoveredRoomRef = useRef(hoveredRoom);
   const onTalkToCrewRef = useRef(onTalkToCrew);
   const prevDayRef = useRef(state.day);
+  const prevPhaseRef = useRef(missionPhase);
+  const playedEventCueKeyRef = useRef<string | null>(null);
 
   stateRef.current = state;
   featuredRef.current = featured;
+  missionPhaseRef.current = missionPhase;
   isOverlayOpenRef.current = isOverlayOpen;
   hoveredRoomRef.current = hoveredRoom;
   onTalkToCrewRef.current = onTalkToCrew;
 
-  // Reset Commander smoothly to central corridor hub whenever advancing to a new Day
+  // Reset Commander cleanly when advancing Day, and refresh target latch on Morning <-> Midday shift
   useEffect(() => {
     if (prevDayRef.current !== state.day) {
       prevDayRef.current = state.day;
+      prevPhaseRef.current = missionPhase;
       posRef.current = { x: COMMANDER_SPAWN.x, y: COMMANDER_SPAWN.y };
       targetRef.current = { x: COMMANDER_SPAWN.x, y: COMMANDER_SPAWN.y };
       waypointsRef.current = [];
@@ -132,8 +140,98 @@ export const TopDownLunarBase: React.FC<TopDownLunarBaseProps> = ({
       pressedKeysRef.current.clear();
       wasInsideTargetRef.current = false;
       setHoveredRoom(null);
+      return;
     }
-  }, [state.day]);
+
+    if (prevPhaseRef.current !== missionPhase) {
+      prevPhaseRef.current = missionPhase;
+      waypointsRef.current = [];
+      autoMeetQueuedRef.current = false;
+      targetRef.current = { x: posRef.current.x, y: posRef.current.y };
+      wasInsideTargetRef.current = isPointInsideRoom(
+        posRef.current.x,
+        posRef.current.y,
+        featured.roomId,
+        14,
+      );
+      setHoveredRoom(null);
+    }
+  }, [featured.roomId, missionPhase, state.day]);
+
+  // Play matching environmental / choice SFX cue once per lunar event transition
+  useEffect(() => {
+    const key = [
+      state.day,
+      missionPhase,
+      state.flags.day3Allocation ?? 'none',
+      state.flags.day4Protocol ?? 'none',
+      state.anomaly?.resolved ? 'resolved' : 'active',
+    ].join(':');
+    if (playedEventCueKeyRef.current === key) return;
+    const isInitialMount = playedEventCueKeyRef.current === null;
+    playedEventCueKeyRef.current = key;
+    if (isInitialMount) return;
+
+    if (state.day === 4) {
+      if (state.flags.day4Protocol === 'max_shielding') {
+        playCue('shutter_lock');
+      } else {
+        playCue(missionPhase === 'midday' ? 'alarm_cme' : 'solar_flare');
+      }
+      if (state.flags.day3Allocation === 'battery_storage') {
+        playCue('crew_shiver');
+      }
+      return;
+    }
+
+    if (missionPhase === 'midday') {
+      switch (state.day) {
+        case 1:
+          playCue('thruster');
+          return;
+        case 2:
+          playCue('water_flow');
+          return;
+        case 3:
+          playCue('power_overload');
+          return;
+        case 5:
+          playCue('co2_hiss');
+          return;
+        case 6:
+          playCue('radar_ping');
+          return;
+        case 7:
+          playCue('comms_static');
+          return;
+        default: {
+          const _exhaustive: never = state.day;
+          return _exhaustive;
+        }
+      }
+    }
+
+    if (state.flags.day3Allocation === 'battery_storage' && state.day === 3) {
+      playCue('frost_freeze');
+      playCue('crew_shiver');
+    } else if (state.day === 5 && state.anomaly?.resolved) {
+      playCue('crew_cheer');
+    } else if (state.day === 2) {
+      playCue('bubble');
+    } else if (state.day === 3) {
+      playCue('dust_sweep');
+    } else if (state.day === 6) {
+      playCue('radar_ping');
+    } else if (state.day === 7) {
+      playCue('static_burst');
+    }
+  }, [
+    missionPhase,
+    state.anomaly?.resolved,
+    state.day,
+    state.flags.day3Allocation,
+    state.flags.day4Protocol,
+  ]);
 
   // Prevent stale keys or immediate re-trigger when an overlay modal opens or closes
   useEffect(() => {
@@ -356,6 +454,7 @@ export const TopDownLunarBase: React.FC<TopDownLunarBaseProps> = ({
             selectedRoom: target.roomId,
             animTick: Math.floor((elapsedMs / 1000) * 60),
             elapsedMs,
+            missionPhase: missionPhaseRef.current,
           });
         }
       }
@@ -457,9 +556,15 @@ export const TopDownLunarBase: React.FC<TopDownLunarBaseProps> = ({
             <button
               type="button"
               onClick={startGuidedMeet}
-              className="pointer-events-auto rounded-2xl border-2 border-[#FFFBEB]/85 bg-[#FFD66B] px-6 py-3.5 sm:px-8 sm:py-4 font-display text-base sm:text-xl font-extrabold tracking-wide text-[#0F172A] shadow-[0_0_30px_rgba(255,214,107,0.7)] transition hover:scale-[1.03] hover:brightness-105 active:scale-95"
+              className={
+                missionPhase === 'midday'
+                  ? 'pointer-events-auto rounded-2xl border-2 border-[#FECACA]/90 bg-[#F87171] px-6 py-3.5 sm:px-8 sm:py-4 font-display text-base sm:text-xl font-extrabold tracking-wide text-[#0F172A] shadow-[0_0_32px_rgba(248,113,113,0.75)] transition-transform duration-150 hover:scale-[1.03] hover:brightness-105 active:scale-95'
+                  : 'pointer-events-auto rounded-2xl border-2 border-[#FFFBEB]/85 bg-[#FFD66B] px-6 py-3.5 sm:px-8 sm:py-4 font-display text-base sm:text-xl font-extrabold tracking-wide text-[#0F172A] shadow-[0_0_30px_rgba(255,214,107,0.7)] transition-transform duration-150 hover:scale-[1.03] hover:brightness-105 active:scale-95'
+              }
             >
-              ▶ STEP 1: MEET {featured.crewShortName.toUpperCase()} ({featured.roomLabel})
+              {missionPhase === 'midday'
+                ? `⚠ FIX ANOMALY: MEET ${featured.crewShortName.toUpperCase()} (${featured.roomLabel})`
+                : `▶ STEP 1: MEET ${featured.crewShortName.toUpperCase()} (${featured.roomLabel})`}
             </button>
           </div>
         )}

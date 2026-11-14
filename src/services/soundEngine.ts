@@ -19,7 +19,15 @@ export type SoundCueId =
   | 'meter_down'
   | 'alarm_cme'
   | 'comms_static'
-  | 'victory_fanfare';
+  | 'victory_fanfare'
+  | 'solar_flare'
+  | 'power_overload'
+  | 'frost_freeze'
+  | 'shutter_lock'
+  | 'co2_hiss'
+  | 'choice_impact'
+  | 'crew_cheer'
+  | 'crew_shiver';
 
 export type CanonicalTrackId = 'exploration' | 'crisis' | 'cutscene' | 'silence';
 
@@ -861,6 +869,110 @@ export function playSfx(cue: SoundCueId): void {
     case 'abort': {
       playSfxTone(graph, 440, 220, 0.24, 'sawtooth', 0.14, 0, 1200);
       playSfxTone(graph, 330, 165, 0.34, 'triangle', 0.15, 0.25);
+      break;
+    }
+    case 'solar_flare': {
+      playSfxTone(graph, 72, 42, 0.42, 'sawtooth', 0.16, 0, 240);
+      playSfxNoise({
+        graph,
+        durationSec: 0.45,
+        volume: 0.16,
+        filterType: 'bandpass',
+        startHz: 320,
+        endHz: 2600,
+        q: 3.2,
+        startOffsetSec: 0.04,
+      });
+      playSfxTone(graph, 440, 1280, 0.28, 'triangle', 0.1, 0.08, 2800);
+      break;
+    }
+    case 'power_overload': {
+      playSfxTone(graph, 120, 58, 0.24, 'sawtooth', 0.14, 0, 460);
+      playSfxTone(graph, 1520, 320, 0.08, 'square', 0.13, 0.05, 3200);
+      playSfxNoise({
+        graph,
+        durationSec: 0.08,
+        volume: 0.15,
+        filterType: 'highpass',
+        startHz: 2800,
+        startOffsetSec: 0.05,
+      });
+      playSfxTone(graph, 180, 52, 0.12, 'triangle', 0.18, 0.14);
+      break;
+    }
+    case 'frost_freeze': {
+      playSfxNoise({
+        graph,
+        durationSec: 0.36,
+        volume: 0.14,
+        filterType: 'bandpass',
+        startHz: 1800,
+        endHz: 650,
+        q: 2.2,
+      });
+      playSfxTone(graph, varyPitch(1567.98, 0.04), 1567.98, 0.18, 'sine', 0.12, 0.02);
+      playSfxTone(graph, varyPitch(2093.0, 0.04), 2093.0, 0.22, 'sine', 0.11, 0.08);
+      playSfxTone(graph, varyPitch(2637.02, 0.04), 2637.02, 0.24, 'triangle', 0.08, 0.14);
+      break;
+    }
+    case 'shutter_lock': {
+      playSfxNoise({
+        graph,
+        durationSec: 0.16,
+        volume: 0.14,
+        filterType: 'bandpass',
+        startHz: 950,
+        endHz: 420,
+        q: 2.5,
+      });
+      playSfxTone(graph, 240, 140, 0.15, 'sawtooth', 0.1, 0, 620);
+      playSfxTone(graph, 115, 38, 0.14, 'sine', 0.22, 0.14);
+      playSfxTone(graph, 520, 390, 0.05, 'triangle', 0.12, 0.18);
+      break;
+    }
+    case 'co2_hiss': {
+      playSfxNoise({
+        graph,
+        durationSec: 0.34,
+        volume: 0.17,
+        filterType: 'highpass',
+        startHz: 3200,
+        endHz: 1900,
+        q: 1.1,
+      });
+      playSfxTone(graph, 130, 360, 0.32, 'triangle', 0.11, 0.04, 900);
+      break;
+    }
+    case 'choice_impact': {
+      playSfxTone(graph, 310, 180, 0.055, 'square', 0.11, 0, 1200);
+      playSfxTone(graph, 261.63, 261.63, 0.34, 'triangle', 0.14, 0.045, 1600);
+      playSfxTone(graph, 392.0, 392.0, 0.34, 'triangle', 0.12, 0.06, 2000);
+      playSfxTone(graph, 523.25, 523.25, 0.36, 'sine', 0.13, 0.075);
+      playSfxTone(graph, 659.25, 659.25, 0.38, 'sine', 0.1, 0.09);
+      break;
+    }
+    case 'crew_cheer': {
+      const f1 = varyPitch(659.25, 0.04);
+      const f2 = varyPitch(987.77, 0.04);
+      playSfxTone(graph, f1, f1, 0.1, 'triangle', 0.15, 0);
+      playSfxTone(graph, f2, 1046.5, 0.18, 'sine', 0.17, 0.085);
+      break;
+    }
+    case 'crew_shiver': {
+      playSfxTone(graph, 340, 315, 0.06, 'sine', 0.12, 0);
+      playSfxTone(graph, 315, 340, 0.06, 'sine', 0.12, 0.055);
+      playSfxTone(graph, 332, 305, 0.06, 'sine', 0.11, 0.11);
+      playSfxTone(graph, 305, 275, 0.09, 'triangle', 0.1, 0.165);
+      playSfxNoise({
+        graph,
+        durationSec: 0.14,
+        volume: 0.07,
+        filterType: 'bandpass',
+        startHz: 1400,
+        endHz: 900,
+        q: 1.5,
+        startOffsetSec: 0.02,
+      });
       break;
     }
     default: {

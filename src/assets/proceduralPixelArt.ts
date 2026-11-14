@@ -1,5 +1,6 @@
 import React from 'react';
 import { CREW_PROFILES, ON_BASE_CREW_IDS } from '../data/crewProfiles';
+import { DAILY_SCENARIOS } from '../data/dailyScenarios';
 import type {
   CrewExpression,
   CrewId,
@@ -10,6 +11,8 @@ import type {
   OnBaseCrewId,
   RoomId,
 } from '../types/game';
+
+export type MissionPhase = 'morning' | 'midday';
 
 export interface RoomBound {
   id: RoomId;
@@ -270,6 +273,65 @@ export function getFeaturedDayTarget(day: DayNumber): FeaturedDayTarget {
   }
 }
 
+function getFriendlyRoomLabel(roomId: RoomId): string {
+  switch (roomId) {
+    case 'comms_room':
+      return 'Comms Room';
+    case 'control_room':
+      return 'Command Bridge';
+    case 'science_lab':
+      return 'Science Lab';
+    case 'main_habitat':
+      return 'Habitat Core';
+    case 'power_station':
+      return 'Power Room';
+    case 'medbay':
+      return 'Medbay';
+    case 'greenhouse':
+      return 'Greenhouse';
+    case 'robotics_bay':
+      return 'Rover Pad';
+    default: {
+      const _exhaustive: never = roomId;
+      return _exhaustive;
+    }
+  }
+}
+
+export function getActiveDayTarget(
+  day: DayNumber,
+  missionPhase: MissionPhase = 'morning',
+  state?: Readonly<GameState>,
+): FeaturedDayTarget {
+  if (missionPhase === 'morning') {
+    return getFeaturedDayTarget(day);
+  }
+  const anomaly =
+    state?.anomaly && state.anomaly.day === day
+      ? state.anomaly
+      : DAILY_SCENARIOS[day].anomaly;
+  const room = ROOM_BOUNDS[anomaly.roomId];
+  const crewProfile = CREW_PROFILES[anomaly.specialistId];
+  const crewShortName = crewProfile.name.split(' ')[0] ?? crewProfile.name;
+  const crewY =
+    anomaly.roomId === 'main_habitat'
+      ? room.centerY + 8
+      : room.y + Math.min(104, Math.round(room.height * 0.58));
+
+  return {
+    day,
+    crewId: anomaly.specialistId,
+    crewShortName,
+    badgeText: `⚠ FIX: ${anomaly.title.toUpperCase()}`,
+    roomId: anomaly.roomId,
+    roomLabel: getFriendlyRoomLabel(anomaly.roomId),
+    crewX: room.centerX + 26,
+    crewY,
+    meetX: room.centerX - 24,
+    meetY: crewY,
+  };
+}
+
 export interface GuidePoint {
   readonly x: number;
   readonly y: number;
@@ -290,24 +352,25 @@ function getRoomDoorwayY(roomId: RoomId): number {
   return r.y < ROOM_BOUNDS.main_habitat.y ? 342 : 486;
 }
 
-/** Waypoints routing cleanly through pressurized doorways toward today's featured crew mate. */
-export function getFeaturedGuideWaypoints(
+export function getGuideWaypointsToRoom(
   startX: number,
   startY: number,
-  featured: FeaturedDayTarget,
+  roomId: RoomId,
+  meetX: number,
+  meetY: number,
 ): readonly GuidePoint[] {
   const points: GuidePoint[] = [{ x: startX, y: startY }];
   const startRoom = findContainingRoomId(startX, startY);
 
-  if (startRoom === featured.roomId) {
-    points.push({ x: featured.meetX, y: featured.meetY });
+  if (startRoom === roomId) {
+    points.push({ x: meetX, y: meetY });
     return points;
   }
 
   const corridorY = 458;
-  const targetRoom = ROOM_BOUNDS[featured.roomId];
+  const targetRoom = ROOM_BOUNDS[roomId];
   const targetDoorX = targetRoom.centerX;
-  const targetDoorY = getRoomDoorwayY(featured.roomId);
+  const targetDoorY = getRoomDoorwayY(roomId);
 
   if (startRoom !== null && startRoom !== 'main_habitat') {
     const exitDoorX = ROOM_BOUNDS[startRoom].centerX;
@@ -318,10 +381,29 @@ export function getFeaturedGuideWaypoints(
     points.push({ x: startX, y: corridorY });
   }
 
-  points.push({ x: targetDoorX, y: corridorY });
-  points.push({ x: targetDoorX, y: targetDoorY });
-  points.push({ x: featured.meetX, y: featured.meetY });
+  if (roomId !== 'main_habitat') {
+    points.push({ x: targetDoorX, y: corridorY });
+    points.push({ x: targetDoorX, y: targetDoorY });
+  } else {
+    points.push({ x: meetX, y: corridorY });
+  }
+  points.push({ x: meetX, y: meetY });
   return points;
+}
+
+/** Waypoints routing cleanly through pressurized doorways toward today's featured crew mate. */
+export function getFeaturedGuideWaypoints(
+  startX: number,
+  startY: number,
+  featured: FeaturedDayTarget,
+): readonly GuidePoint[] {
+  return getGuideWaypointsToRoom(
+    startX,
+    startY,
+    featured.roomId,
+    featured.meetX,
+    featured.meetY,
+  );
 }
 
 export type SpriteFacing = 'down' | 'up' | 'left' | 'right';
@@ -349,6 +431,7 @@ export interface BaseMapViewState {
   commanderDir?: SpriteFacing;
   walkPhase?: number;
   dustPuffs?: readonly RegolithDustPuff[];
+  missionPhase?: MissionPhase;
 }
 
 export interface CrewAvatarProps {
@@ -1387,6 +1470,151 @@ function drawLayeredPixelEarth(
   ctx.stroke();
 }
 
+interface WorldDustParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  color: string;
+}
+
+interface WorldProtonStreak {
+  x: number;
+  y: number;
+  speed: number;
+  len: number;
+  magenta: boolean;
+}
+
+interface WorldSparkMote {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  maxAge: number;
+  color: string;
+}
+
+interface WorldEffectsTracker {
+  lastTimeMs: number;
+  orangeDust: WorldDustParticle[];
+  protonStreaks: WorldProtonStreak[];
+  co2Motes: WorldSparkMote[];
+  staticSeed: number;
+}
+
+const worldEffectsTrackers = new WeakMap<CanvasRenderingContext2D, WorldEffectsTracker>();
+
+function createInitialWorldEffectsTracker(timeMs: number): WorldEffectsTracker {
+  const orangeDust: WorldDustParticle[] = [];
+  for (let i = 0; i < 32; i++) {
+    orangeDust.push({
+      x: 10 + ((i * 53) % 192),
+      y: 176 + ((i * 89) % 466),
+      vx: 26 + (i % 4) * 9,
+      vy: 6 + (i % 3) * 4,
+      size: i % 4 === 0 ? 4 : 3,
+      color: i % 3 === 0 ? '#FB923C' : i % 2 === 0 ? '#F97316' : '#FDBA74',
+    });
+  }
+
+  const protonStreaks: WorldProtonStreak[] = [];
+  for (let i = 0; i < 34; i++) {
+    protonStreaks.push({
+      x: (i * 97) % BASE_CANVAS_WIDTH,
+      y: (i * 61) % BASE_CANVAS_HEIGHT,
+      speed: 240 + (i % 5) * 48,
+      len: 26 + (i % 4) * 10,
+      magenta: i % 2 === 1,
+    });
+  }
+
+  const co2Motes: WorldSparkMote[] = [];
+  for (let i = 0; i < 26; i++) {
+    const inMedbay = i < 14;
+    const baseRoom = inMedbay ? ROOM_BOUNDS.medbay : ROOM_BOUNDS.main_habitat;
+    const minX = inMedbay ? baseRoom.x + 18 : baseRoom.x + 390;
+    const spanX = inMedbay ? baseRoom.width - 36 : 320;
+    co2Motes.push({
+      x: minX + ((i * 41) % spanX),
+      y: baseRoom.y + 34 + ((i * 29) % (baseRoom.height - 56)),
+      vx: ((i % 3) - 1) * 14,
+      vy: -9 - (i % 4) * 4,
+      age: (i * 0.17) % 2.4,
+      maxAge: 2.4,
+      color: i % 2 === 0 ? '#F59E0B' : '#FBBF24',
+    });
+  }
+
+  return {
+    lastTimeMs: timeMs,
+    orangeDust,
+    protonStreaks,
+    co2Motes,
+    staticSeed: 0,
+  };
+}
+
+function advanceWorldEffectsTracker(
+  ctx: CanvasRenderingContext2D,
+  timeMs: number,
+): WorldEffectsTracker {
+  let tracker = worldEffectsTrackers.get(ctx);
+  if (!tracker) {
+    tracker = createInitialWorldEffectsTracker(timeMs);
+    worldEffectsTrackers.set(ctx, tracker);
+    return tracker;
+  }
+
+  const dt = Math.min(0.05, Math.max(0.001, (timeMs - tracker.lastTimeMs) / 1000));
+  tracker.lastTimeMs = timeMs;
+  tracker.staticSeed += dt;
+
+  for (const p of tracker.orangeDust) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (p.x > 205) {
+      p.x = 6;
+    }
+    if (p.y > 650) {
+      p.y = 176;
+    }
+  }
+
+  for (const s of tracker.protonStreaks) {
+    s.x += s.speed * dt;
+    s.y += s.speed * 0.42 * dt;
+    if (s.x > BASE_CANVAS_WIDTH + 40) {
+      s.x = -40;
+      s.y = (s.y + 137) % BASE_CANVAS_HEIGHT;
+    }
+    if (s.y > BASE_CANVAS_HEIGHT + 20) {
+      s.y = -20;
+    }
+  }
+
+  for (let i = 0; i < tracker.co2Motes.length; i++) {
+    const m = tracker.co2Motes[i];
+    if (!m) continue;
+    m.age += dt;
+    m.x += m.vx * dt;
+    m.y += m.vy * dt;
+    if (m.age >= m.maxAge) {
+      m.age = 0;
+      const inMedbay = i < 14;
+      const baseRoom = inMedbay ? ROOM_BOUNDS.medbay : ROOM_BOUNDS.main_habitat;
+      const minX = inMedbay ? baseRoom.x + 18 : baseRoom.x + 390;
+      const spanX = inMedbay ? baseRoom.width - 36 : 320;
+      m.x = minX + ((i * 53 + Math.floor(timeMs * 0.03)) % spanX);
+      m.y = baseRoom.y + baseRoom.height - 26;
+    }
+  }
+
+  return tracker;
+}
+
 function drawParallaxSkyAndEarthLimb(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -1398,17 +1626,19 @@ function drawParallaxSkyAndEarthLimb(
     earthR: number;
     solarStormActive: boolean;
     sunlitRidge: boolean;
+    craterShadow: boolean;
+    radioStaticActive: boolean;
   },
 ): void {
   const skyGrad = ctx.createLinearGradient(0, 0, 0, skyHeight);
-  skyGrad.addColorStop(0, '#070B16');
-  skyGrad.addColorStop(0.65, '#0F172A');
-  skyGrad.addColorStop(1, options.solarStormActive ? '#2C1822' : '#1A2744');
+  skyGrad.addColorStop(0, options.solarStormActive ? '#14081E' : '#070B16');
+  skyGrad.addColorStop(0.65, options.solarStormActive ? '#26112E' : '#0F172A');
+  skyGrad.addColorStop(1, options.solarStormActive ? '#4A153B' : '#1A2744');
   ctx.fillStyle = skyGrad;
   ctx.fillRect(0, 0, w, skyHeight);
 
   // 3 parallax star layers
-  for (let i = 0; i < 84; i++) {
+  for (let i = 0; i < 88; i++) {
     const layer = i % 3;
     const speed = layer === 0 ? 1.8 : layer === 1 ? 4.5 : 8.5;
     const sx = ((i * 197 + tSec * speed) % (w + 16)) - 8;
@@ -1432,20 +1662,49 @@ function drawParallaxSkyAndEarthLimb(
   ctx.clip();
   drawLayeredPixelEarth(ctx, earthX, earthY, earthR, tSec, 18, 2.5);
 
-  // Solar storm plasma waves in lunar sky on Day 4
+  // Dramatic X-class Solar Storm golden/magenta aurora & proton bands in sky on Day 4
   if (options.solarStormActive) {
-    for (let wave = 0; wave < 3; wave++) {
+    for (let wave = 0; wave < 4; wave++) {
       ctx.beginPath();
-      for (let x = 0; x <= w; x += 24) {
-        const wy = 44 + wave * 26 + Math.sin(x * 0.018 + tSec * 3.8 + wave) * 10;
+      for (let x = 0; x <= w; x += 20) {
+        const wy = 24 + wave * 24 + Math.sin(x * 0.02 + tSec * 4.4 + wave * 1.1) * 11;
         if (x === 0) ctx.moveTo(x, wy);
         else ctx.lineTo(x, wy);
       }
       ctx.strokeStyle =
-        wave % 2 === 0 ? 'rgba(255, 214, 107, 0.45)' : 'rgba(248, 113, 113, 0.48)';
+        wave % 2 === 0 ? 'rgba(255, 214, 107, 0.55)' : 'rgba(232, 121, 249, 0.55)';
       ctx.lineWidth = 3;
       ctx.stroke();
     }
+  }
+
+  // Day 7 crackling solar radio static interference waves across the starfield
+  if (options.radioStaticActive) {
+    for (let s = 0; s < 16; s++) {
+      const sy = 12 + ((s * 29 + Math.floor(tSec * 90)) % (skyHeight - 36));
+      const sx = (s * 149 + Math.floor(tSec * 310)) % (w - 90);
+      const sw = 34 + (s % 4) * 24;
+      const staticColor =
+        s % 3 === 0
+          ? 'rgba(248, 113, 113, 0.65)'
+          : s % 3 === 1
+            ? 'rgba(251, 191, 36, 0.55)'
+            : 'rgba(232, 121, 249, 0.5)';
+      drawPixelRect(ctx, sx, sy, sw, 2, staticColor);
+      drawPixelRect(ctx, sx + 12, sy + 3, Math.round(sw * 0.55), 2, 'rgba(248, 250, 252, 0.45)');
+    }
+
+    // Crackling radio burst arcs around Earth-Moon sky link
+    ctx.strokeStyle = 'rgba(248, 113, 113, 0.75)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let bx = 315; bx <= 1120; bx += 22) {
+      const jitter = Math.sin(bx * 0.14 + tSec * 24) * 7;
+      const by = 68 + jitter;
+      if (bx === 315) ctx.moveTo(bx, by);
+      else ctx.lineTo(bx, by);
+    }
+    ctx.stroke();
   }
 
   ctx.restore();
@@ -1473,7 +1732,7 @@ function drawParallaxSkyAndEarthLimb(
   }
   ctx.lineTo(w, skyHeight);
   ctx.closePath();
-  ctx.fillStyle = '#182235';
+  ctx.fillStyle = options.craterShadow ? '#111A30' : '#182235';
   ctx.fill();
 
   ctx.beginPath();
@@ -1484,10 +1743,12 @@ function drawParallaxSkyAndEarthLimb(
     else ctx.lineTo(pt[0], pt[1]);
   }
   ctx.strokeStyle = options.solarStormActive
-    ? '#F87171'
+    ? '#F472B6'
     : options.sunlitRidge
       ? '#FFD66B'
-      : '#475569';
+      : options.craterShadow
+        ? '#79C8E8'
+        : '#475569';
   ctx.lineWidth = 2.5;
   ctx.stroke();
 
@@ -1501,12 +1762,14 @@ function drawPixelRover(
   y: number,
   tSec: number,
   moving: boolean,
+  hasIceCargo = false,
+  frostedWheels = false,
 ): void {
   const rx = Math.round(x);
   const ry = Math.round(y);
   const treadOffset = moving ? Math.floor(tSec * 12) % 4 : 0;
 
-  // Wheels + animated tread ticks
+  // Wheels + animated tread ticks (frosted cyan/white rim in -200°C crater chill)
   const wheelPositions: readonly [number, number][] = [
     [rx - 5, ry + 2],
     [rx + 26, ry + 2],
@@ -1515,8 +1778,22 @@ function drawPixelRover(
   ];
   for (const [wx, wy] of wheelPositions) {
     drawPixelRect(ctx, wx, wy, 7, 10, '#0F172A');
-    drawPixelRect(ctx, wx + 1, wy + 1 + treadOffset, 5, 2, '#64748B');
-    drawPixelRect(ctx, wx + 1, wy + ((5 + treadOffset) % 8), 5, 2, '#64748B');
+    drawPixelRect(
+      ctx,
+      wx + 1,
+      wy + 1 + treadOffset,
+      5,
+      2,
+      frostedWheels ? '#BAE6FD' : '#64748B',
+    );
+    drawPixelRect(
+      ctx,
+      wx + 1,
+      wy + ((5 + treadOffset) % 8),
+      5,
+      2,
+      frostedWheels ? '#79C8E8' : '#64748B',
+    );
   }
 
   // Gold foil & white rover chassis
@@ -1524,11 +1801,108 @@ function drawPixelRover(
   drawPixelRect(ctx, rx + 4, ry + 8, 20, 14, '#FFD66B');
   drawPixelRect(ctx, rx + 7, ry + 11, 14, 8, '#263C75');
 
+  if (hasIceCargo) {
+    // Glowing blue Shackleton ice-core canisters loaded on cargo rack
+    drawPixelRect(ctx, rx + 2, ry + 22, 10, 7, '#0284C7');
+    drawPixelRect(ctx, rx + 3, ry + 23, 8, 5, '#79C8E8');
+    drawPixelRect(ctx, rx + 5, ry + 24, 4, 3, '#E0F2FE');
+  }
+
   // Mast camera & blinking telemetry beacon
   drawPixelRect(ctx, rx + 11, ry - 5, 6, 9, '#475569');
   drawPixelRect(ctx, rx + 8, ry - 7, 12, 4, '#79C8E8');
   const ledOn = Math.floor(tSec * 3) % 2 === 0;
   drawPixelRect(ctx, rx + 12, ry + 24, 4, 4, ledOn ? '#9BD8A7' : '#166534');
+}
+
+function drawDay1TouchdownLander(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  padY: number,
+  tSec: number,
+  activelyDescending: boolean,
+): void {
+  // Expanding concentric pixel dust ripples on Day 1 touchdown pad
+  if (activelyDescending) {
+    for (let ring = 0; ring < 3; ring++) {
+      const progress = (tSec * 0.9 + ring * 0.33) % 1;
+      const rx = 24 + progress * 64;
+      const ry = 9 + progress * 22;
+      const alpha = (1 - progress) * 0.72;
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(cx, padY + 6, rx, ry, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 214, 107, ${alpha.toFixed(2)})`;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Outward drifting pixel dust puffs around touchdown skirt
+    for (let d = 0; d < 8; d++) {
+      const dir = d % 2 === 0 ? -1 : 1;
+      const cycle = (tSec * 1.4 + d * 0.21) % 1;
+      const dx = cx + dir * (18 + cycle * 58);
+      const dy = padY + 4 - Math.sin(cycle * Math.PI) * 14 + (d % 3) * 3;
+      const dAlpha = Math.max(0, (1 - cycle) * 0.7);
+      drawPixelRect(ctx, dx - 3, dy - 3, 6, 6, `rgba(203, 213, 225, ${dAlpha.toFixed(2)})`);
+    }
+  }
+
+  const hoverCycle = activelyDescending ? Math.abs(Math.sin(tSec * 1.15)) * 22 : 0;
+  const ly = Math.round(padY - 22 - hoverCycle);
+
+  // Thruster exhaust plume when descending
+  if (activelyDescending) {
+    const flameLen = 14 + Math.round((Math.sin(tSec * 36) * 0.5 + 0.5) * 12);
+    ctx.fillStyle = '#F97316';
+    ctx.beginPath();
+    ctx.moveTo(cx - 9, ly + 18);
+    ctx.lineTo(cx + 9, ly + 18);
+    ctx.lineTo(cx, ly + 18 + flameLen);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#FFD66B';
+    ctx.beginPath();
+    ctx.moveTo(cx - 5, ly + 18);
+    ctx.lineTo(cx + 5, ly + 18);
+    ctx.lineTo(cx, ly + 14 + flameLen * 0.75);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Landing legs
+  ctx.strokeStyle = '#CBD5E1';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - 12, ly + 12);
+  ctx.lineTo(cx - 21, ly + 22);
+  ctx.moveTo(cx + 12, ly + 12);
+  ctx.lineTo(cx + 21, ly + 22);
+  ctx.stroke();
+  drawPixelRect(ctx, cx - 25, ly + 21, 8, 3, '#FFD66B');
+  drawPixelRect(ctx, cx + 17, ly + 21, 8, 3, '#FFD66B');
+
+  // Gold foil descent stage & white crew cabin
+  drawPixelRect(ctx, cx - 15, ly + 4, 30, 12, '#D97706');
+  drawPixelRect(ctx, cx - 12, ly + 6, 24, 8, '#FFD66B');
+  drawPixelRect(ctx, cx - 11, ly - 10, 22, 14, '#F8FAFC');
+  drawPixelRect(ctx, cx - 6, ly - 6, 12, 6, '#263C75');
+  drawPixelRect(ctx, cx - 4, ly - 5, 8, 2, '#79C8E8');
+}
+
+function drawJaggedMoonBoulder(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  scale: number,
+): void {
+  const s = scale;
+  drawPixelRect(ctx, x - 12 * s, y, 24 * s, 10 * s, '#334155');
+  drawPixelRect(ctx, x - 9 * s, y - 6 * s, 17 * s, 8 * s, '#475569');
+  drawPixelRect(ctx, x - 5 * s, y - 10 * s, 9 * s, 5 * s, '#64748B');
+  drawPixelRect(ctx, x - 3 * s, y - 9 * s, 4 * s, 3 * s, '#94A3B8');
 }
 
 /* ============================================================================
@@ -1539,10 +1913,14 @@ function drawExteriorSurface(
   ctx: CanvasRenderingContext2D,
   state: Readonly<GameState>,
   tSec: number,
+  tracker: WorldEffectsTracker,
+  missionPhase: MissionPhase,
 ): void {
   const skyHeight = 148;
   const site = state.flags.landingSite;
   const solarStormActive = state.day === 4;
+  const day7StaticActive =
+    state.day === 7 && (state.commsBlackout || !state.eveningDecisionCompletedForDay);
 
   // Panoramic northern lunar sky & Earth limb
   drawParallaxSkyAndEarthLimb(ctx, BASE_CANVAS_WIDTH, skyHeight, tSec, {
@@ -1551,6 +1929,8 @@ function drawExteriorSurface(
     earthR: 54,
     solarStormActive,
     sunlitRidge: site === 'sunlit_ridge',
+    craterShadow: site === 'crater_shadow',
+    radioStaticActive: day7StaticActive,
   });
 
   // Base regolith background (y: 148..720)
@@ -1563,6 +1943,47 @@ function drawExteriorSurface(
       const shade = alt ? '#232F44' : '#1D273B';
       drawPixelRect(ctx, gx * 32, gy * 32, 32, 32, shade);
     }
+  }
+
+  // Persistent Day 1 Sunlit Ridge golden lighting wash & extra sunlight rays vs Shaded Crater Wall & protective rock berm
+  if (site === 'sunlit_ridge') {
+    const sunWash = ctx.createLinearGradient(0, 148, BASE_CANVAS_WIDTH, 720);
+    sunWash.addColorStop(0, 'rgba(255, 214, 107, 0.22)');
+    sunWash.addColorStop(0.5, 'rgba(255, 214, 107, 0.08)');
+    sunWash.addColorStop(1, 'rgba(245, 158, 11, 0.16)');
+    ctx.fillStyle = sunWash;
+    ctx.fillRect(0, skyHeight, BASE_CANVAS_WIDTH, BASE_CANVAS_HEIGHT - skyHeight);
+
+    // Warm diagonal golden sunbeams across West Solar Field
+    ctx.save();
+    for (let r = 0; r < 3; r++) {
+      const rx = 20 + r * 58;
+      ctx.fillStyle = `rgba(255, 243, 196, ${(0.07 + 0.03 * Math.sin(tSec * 2 + r)).toFixed(2)})`;
+      ctx.beginPath();
+      ctx.moveTo(rx, 148);
+      ctx.lineTo(rx + 28, 148);
+      ctx.lineTo(rx + 96, 680);
+      ctx.lineTo(rx + 60, 680);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  } else if (site === 'crater_shadow') {
+    const shadeWash = ctx.createLinearGradient(880, 148, 1280, 720);
+    shadeWash.addColorStop(0, 'rgba(15, 23, 42, 0)');
+    shadeWash.addColorStop(0.45, 'rgba(15, 23, 42, 0.45)');
+    shadeWash.addColorStop(1, 'rgba(10, 22, 54, 0.68)');
+    ctx.fillStyle = shadeWash;
+    ctx.fillRect(880, skyHeight, 400, BASE_CANVAS_HEIGHT - skyHeight);
+
+    // Protective regolith rock berm shielding East Habitat flank
+    const bermYs: readonly number[] = [318, 356, 396, 434];
+    for (let b = 0; b < bermYs.length; b++) {
+      const by = bermYs[b];
+      if (by === undefined) continue;
+      drawJaggedMoonBoulder(ctx, 1012, by, b % 2 === 0 ? 1.15 : 0.95);
+    }
+    drawPixelRect(ctx, 1002, 304, 16, 168, 'rgba(121, 200, 232, 0.16)');
   }
 
   // Scattered South Pole craters outside base footprint
@@ -1587,9 +2008,10 @@ function drawExteriorSurface(
   }
 
   // ---- WEST SOLAR ARRAY FIELD (x: 18..188, y: 172..668) ----
-  const solarDusty =
+  const day3DustActive =
     state.day === 3 ||
     (state.anomaly !== null && !state.anomaly.resolved && state.anomaly.roomId === 'power_station');
+  const solarDusty = day3DustActive || state.primary.power < 42;
   const solarScorched = state.day >= 4 && state.primary.shielding < 65;
 
   // Power bus trench leading into Power Core
@@ -1599,78 +2021,109 @@ function drawExteriorSurface(
   const pulseX = 152 + ((tSec * 44) % 56);
   drawPixelRect(ctx, pulseX, 573, 8, 6, lowPower ? '#F87171' : '#F8FAFC');
 
-  const arrayYs: readonly number[] = [194, 304, 414, 524];
+  // Day 3 yellow electric spark arcs near Power Station bus trench (or continuous when overclocking regulators)
+  const sparkStorm =
+    state.day === 3 ||
+    state.flags.day3Allocation === 'overclock_regulators' ||
+    state.flags.hardwareFaultRisk;
+  if (sparkStorm) {
+    const sparkRate = missionPhase === 'midday' ? 16 : 12;
+    const sparkTick = Math.floor(tSec * sparkRate) % 4;
+    if (sparkTick !== 2) {
+      ctx.save();
+      ctx.strokeStyle = sparkTick % 2 === 0 ? '#FFD66B' : '#FFFBEB';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(156, 566);
+      ctx.lineTo(170, 554 + (sparkTick * 3));
+      ctx.lineTo(182, 569);
+      ctx.lineTo(196, 558);
+      ctx.lineTo(208, 572);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(164, 586);
+      ctx.lineTo(178, 598 - sparkTick * 2);
+      ctx.lineTo(194, 583);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  const arrayYs: readonly number[] =
+    site === 'sunlit_ridge' ? [184, 286, 388, 490, 592] : [194, 304, 414, 524];
   for (let i = 0; i < arrayYs.length; i++) {
     const ay = arrayYs[i];
     if (ay === undefined) continue;
+    const wingH = site === 'sunlit_ridge' ? 44 : 48;
 
-    drawPixelRect(ctx, 90, ay + 16, 12, 36, '#64748B');
+    drawPixelRect(ctx, 90, ay + 14, 12, wingH - 12, '#64748B');
     const wingColor = site === 'sunlit_ridge' ? '#263C75' : '#1E3A8A';
-    drawPixelRect(ctx, 24, ay, 60, 48, wingColor);
-    drawPixelRect(ctx, 108, ay, 60, 48, wingColor);
+    drawPixelRect(ctx, 24, ay, 60, wingH, wingColor);
+    drawPixelRect(ctx, 108, ay, 60, wingH, wingColor);
 
     ctx.strokeStyle = site === 'sunlit_ridge' ? '#FFD66B' : '#79C8E8';
     ctx.lineWidth = 2;
-    ctx.strokeRect(24, ay, 60, 48);
-    ctx.strokeRect(108, ay, 60, 48);
+    ctx.strokeRect(24, ay, 60, wingH);
+    ctx.strokeRect(108, ay, 60, wingH);
 
     // PV cell seams
     for (let cell = 1; cell < 4; cell++) {
-      drawPixelRect(ctx, 24, ay + cell * 12, 60, 1, 'rgba(121, 200, 232, 0.65)');
-      drawPixelRect(ctx, 108, ay + cell * 12, 60, 1, 'rgba(121, 200, 232, 0.65)');
+      const seamY = ay + Math.round((wingH / 4) * cell);
+      drawPixelRect(ctx, 24, seamY, 60, 1, 'rgba(121, 200, 232, 0.65)');
+      drawPixelRect(ctx, 108, seamY, 60, 1, 'rgba(121, 200, 232, 0.65)');
     }
 
-    // Glinting solar wing sweep reflection
+    // Glinting solar wing sweep reflection (brighter on Sunlit Ridge)
     const glintX = ((tSec * 46 + i * 28) % 88) - 14;
-    if (glintX >= 0 && glintX < 54) {
-      drawPixelRect(ctx, 26 + glintX, ay + 2, 6, 44, 'rgba(248, 250, 252, 0.25)');
-      drawPixelRect(ctx, 110 + glintX, ay + 2, 6, 44, 'rgba(248, 250, 252, 0.25)');
+    if (glintX >= 0 && glintX < 54 && !solarDusty) {
+      const glintAlpha = site === 'sunlit_ridge' ? 0.48 : 0.25;
+      drawPixelRect(ctx, 26 + glintX, ay + 2, 6, wingH - 4, `rgba(255, 251, 235, ${glintAlpha})`);
+      drawPixelRect(ctx, 110 + glintX, ay + 2, 6, wingH - 4, `rgba(255, 251, 235, ${glintAlpha})`);
     }
 
     if (solarDusty) {
-      drawPixelRect(ctx, 32, ay + 8, 16, 10, 'rgba(148, 163, 184, 0.58)');
-      drawPixelRect(ctx, 124, ay + 26, 20, 12, 'rgba(148, 163, 184, 0.58)');
+      // Electrostatic orange lunar dust buildup on solar wings
+      drawPixelRect(ctx, 30, ay + 6, 22, 12, 'rgba(249, 115, 22, 0.56)');
+      drawPixelRect(ctx, 52, ay + 26, 18, 10, 'rgba(251, 146, 60, 0.5)');
+      drawPixelRect(ctx, 118, ay + 20, 26, 12, 'rgba(249, 115, 22, 0.56)');
+      drawPixelRect(ctx, 134, ay + 8, 16, 8, 'rgba(251, 146, 60, 0.48)');
     }
     if (solarScorched) {
-      drawPixelRect(ctx, 50, ay + 28, 12, 8, 'rgba(15, 23, 42, 0.78)');
+      drawPixelRect(ctx, 50, ay + 26, 12, 8, 'rgba(15, 23, 42, 0.78)');
       drawPixelRect(ctx, 116, ay + 10, 10, 8, 'rgba(249, 115, 22, 0.5)');
     }
     if (lowPower && Math.floor(tSec * 6 + i) % 3 === 0) {
       drawPixelRect(ctx, 94, ay + 12, 4, 4, '#F59E0B');
     }
   }
-  drawBadgeLabel(ctx, 96, 650, 'WEST SOLAR FIELD', '#F8FAFC', '#475569');
 
-  // ---- EAST SHACKLETON CRATER RIM, S-BAND RELAY & ROVER PAD (x: 994..1264) ----
-  if (site === 'sunlit_ridge') {
-    const grad = ctx.createLinearGradient(1000, 156, 1280, 690);
-    grad.addColorStop(0, 'rgba(255, 214, 107, 0.18)');
-    grad.addColorStop(1, 'rgba(245, 158, 11, 0.06)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(994, 152, 286, 540);
-  } else if (site === 'crater_shadow') {
-    const grad = ctx.createLinearGradient(1000, 156, 1280, 690);
-    grad.addColorStop(0, 'rgba(15, 23, 42, 0.4)');
-    grad.addColorStop(1, 'rgba(30, 58, 138, 0.52)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(994, 152, 286, 540);
+  // Animated drifting electrostatic orange lunar dust grains across solar array on Day 3
+  if (day3DustActive) {
+    for (const dust of tracker.orangeDust) {
+      drawPixelRect(ctx, dust.x, dust.y, dust.size, dust.size, dust.color);
+    }
   }
 
+  drawBadgeLabel(ctx, 96, 650, 'WEST SOLAR FIELD', '#F8FAFC', '#475569');
+
+  // ---- EAST SHACKLETON CRATER RIM, S-BAND RELAY & TOUCHDOWN/ROVER PAD (x: 994..1264) ----
   // S-Band Relay Pad (North-East, x: 1044..1240, y: 174..286)
   drawPixelRect(ctx, 1044, 174, 196, 112, '#334155');
-  ctx.strokeStyle = '#64748B';
+  ctx.strokeStyle = state.flags.relayReinforced ? '#9BD8A7' : '#64748B';
   ctx.lineWidth = 2;
   ctx.strokeRect(1044, 174, 196, 112);
 
   // Relay cable trench to Science/Comms wing
   drawPixelRect(ctx, 978, 224, 66, 10, '#475569');
-  drawPixelRect(ctx, 978, 228, 66, 3, state.commsBlackout ? '#F87171' : '#79C8E8');
+  drawPixelRect(ctx, 978, 228, 66, 3, day7StaticActive ? '#F87171' : '#79C8E8');
 
   // Rotating S-Band radar sweep beam
   const dishX = 1142;
   const dishY = 216;
-  const blackout = state.day === 7 && state.commsBlackout;
-  if (!blackout) {
+  if (!day7StaticActive) {
     const sweepAngle = tSec * 1.5;
     ctx.save();
     ctx.beginPath();
@@ -1678,7 +2131,7 @@ function drawExteriorSurface(
     ctx.arc(dishX, dishY, 44, sweepAngle, sweepAngle + 0.62);
     ctx.closePath();
     ctx.fillStyle = state.flags.relayReinforced
-      ? 'rgba(155, 216, 167, 0.25)'
+      ? 'rgba(155, 216, 167, 0.28)'
       : 'rgba(121, 200, 232, 0.22)';
     ctx.fill();
     ctx.restore();
@@ -1686,6 +2139,10 @@ function drawExteriorSurface(
 
   // Relay hardware mast & dish
   drawPixelRect(ctx, dishX - 10, dishY + 10, 20, 14, '#94A3B8');
+  if (state.flags.relayReinforced) {
+    drawPixelRect(ctx, dishX - 16, dishY + 12, 6, 12, '#9BD8A7');
+    drawPixelRect(ctx, dishX + 10, dishY + 12, 6, 12, '#9BD8A7');
+  }
   ctx.beginPath();
   ctx.arc(dishX, dishY, 19, Math.PI * 0.85, Math.PI * 1.95);
   ctx.strokeStyle = '#F8FAFC';
@@ -1693,10 +2150,10 @@ function drawExteriorSurface(
   ctx.stroke();
   drawPixelRect(ctx, dishX - 2, dishY - 17, 4, 17, '#CBD5E1');
 
-  const beaconColor = blackout
-    ? Math.floor(tSec * 4) % 2 === 0
+  const beaconColor = day7StaticActive
+    ? Math.floor(tSec * 6) % 2 === 0
       ? '#F87171'
-      : '#7F1D1D'
+      : '#FBBF24'
     : state.flags.relayReinforced
       ? '#9BD8A7'
       : '#FFD66B';
@@ -1705,7 +2162,24 @@ function drawExteriorSurface(
   ctx.fillStyle = beaconColor;
   ctx.fill();
 
-  if (state.flags.relayReinforced && !blackout) {
+  // Day 7 crackling static interference ripples radiating around S-Band Comms Dish
+  if (day7StaticActive) {
+    for (let r = 0; r < 3; r++) {
+      const wavePhase = (tSec * 2.2 + r * 0.33) % 1;
+      const radius = 14 + wavePhase * 42;
+      ctx.save();
+      ctx.strokeStyle =
+        r % 2 === 0
+          ? `rgba(248, 113, 113, ${(1 - wavePhase) * 0.85})`
+          : `rgba(251, 191, 36, ${(1 - wavePhase) * 0.8})`;
+      ctx.lineWidth = 2.2;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.arc(dishX, dishY - 16, radius, -Math.PI * 0.85, Math.PI * 0.1);
+      ctx.stroke();
+      ctx.restore();
+    }
+  } else if (state.flags.relayReinforced) {
     const pulseR = 10 + ((tSec * 28) % 26);
     ctx.beginPath();
     ctx.arc(dishX, dishY - 21, pulseR, 0, Math.PI * 2);
@@ -1717,87 +2191,166 @@ function drawExteriorSurface(
     ctx,
     1142,
     274,
-    blackout ? 'S-BAND: LOS' : 'S-BAND RELAY',
-    blackout ? '#F87171' : '#F8FAFC',
-    blackout ? '#F87171' : '#64748B',
+    day7StaticActive ? 'S-BAND: STATIC' : 'S-BAND RELAY',
+    day7StaticActive ? '#F87171' : '#F8FAFC',
+    day7StaticActive ? '#F87171' : '#64748B',
   );
 
   // Shackleton Crater Ice Rim (East-Center)
   const craterX = 1142;
-  const craterY = 408;
+  const craterY = 398;
+  const deepIceShadow = site === 'crater_shadow' || state.day === 3 || state.day === 6;
+
+  // Day 3 creeping icy -200°C crater shadow expansion
+  if (state.day === 3 || site === 'crater_shadow') {
+    const creep = state.day === 3 ? 6 + Math.sin(tSec * 1.4) * 5 : 4;
+    ctx.beginPath();
+    ctx.ellipse(craterX - 6, craterY + 6, 98 + creep, 84 + creep * 0.7, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(8, 16, 44, 0.72)';
+    ctx.fill();
+  }
+
   ctx.beginPath();
-  ctx.ellipse(craterX, craterY, 88, 78, 0, 0, Math.PI * 2);
-  ctx.fillStyle = site === 'crater_shadow' ? '#0F1B3D' : '#1E293B';
+  ctx.ellipse(craterX, craterY, 86, 74, 0, 0, Math.PI * 2);
+  ctx.fillStyle = deepIceShadow ? '#0B1636' : '#1E293B';
   ctx.fill();
   ctx.lineWidth = 4;
-  ctx.strokeStyle = site === 'sunlit_ridge' ? '#FFD66B' : '#475569';
+  ctx.strokeStyle = site === 'sunlit_ridge' ? '#FFD66B' : deepIceShadow ? '#79C8E8' : '#475569';
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.ellipse(craterX + 4, craterY + 6, 56, 48, 0, 0, Math.PI * 2);
-  ctx.fillStyle = site === 'crater_shadow' ? '#091128' : '#162032';
+  ctx.ellipse(craterX + 4, craterY + 6, 56, 46, 0, 0, Math.PI * 2);
+  ctx.fillStyle = deepIceShadow ? '#060E24' : '#162032';
   ctx.fill();
 
-  // Water-ice crystal glints
-  const iceAlpha = site === 'crater_shadow' ? 0.9 : 0.42;
+  // Water-ice crystal glints (extra rich on Crater Shadow, Day 3, Day 6)
+  const iceAlpha = site === 'crater_shadow' ? 0.95 : deepIceShadow ? 0.78 : 0.42;
   const shimmer = 0.55 + 0.45 * Math.sin(tSec * 3.2);
   const iceColor = `rgba(121, 200, 232, ${(iceAlpha * shimmer).toFixed(2)})`;
-  drawPixelRect(ctx, craterX - 24, craterY - 10, 10, 8, iceColor);
+  drawPixelRect(ctx, craterX - 28, craterY - 12, 10, 8, iceColor);
   drawPixelRect(ctx, craterX + 12, craterY + 12, 12, 8, iceColor);
-  drawPixelRect(ctx, craterX - 8, craterY + 28, 8, 8, iceColor);
+  drawPixelRect(ctx, craterX - 10, craterY + 26, 10, 8, iceColor);
+  if (site === 'crater_shadow' || state.day === 3) {
+    drawPixelRect(ctx, craterX + 26, craterY - 16, 10, 10, '#BAE6FD');
+    drawPixelRect(ctx, craterX - 42, craterY + 8, 8, 8, '#E0F2FE');
+  }
 
   const rimText =
-    site === 'sunlit_ridge'
-      ? 'SUNLIT RIDGE'
-      : site === 'crater_shadow'
-        ? 'CRATER SHADOW'
-        : 'SHACKLETON RIM';
+    state.day === 3
+      ? '-200°C ICE SHADOW'
+      : site === 'sunlit_ridge'
+        ? 'SUNLIT RIDGE'
+        : site === 'crater_shadow'
+          ? 'CRATER ICE RIM'
+          : 'SHACKLETON RIM';
   drawBadgeLabel(
     ctx,
     craterX,
-    316,
+    314,
     rimText,
     site === 'sunlit_ridge' ? '#FFD66B' : '#79C8E8',
     site === 'sunlit_ridge' ? '#FFD66B' : '#475569',
   );
 
-  // East Airlock Apron & Day 6+ Ice-Mining Rover Pad
-  drawPixelRect(ctx, 978, 550, 56, 56, '#475569');
-  drawPixelRect(ctx, 982, 556, 46, 44, '#334155');
+  // East Airlock Apron & Landing Pad / Day 6+ Exterior Rover Zone (y: 496..690)
+  drawPixelRect(ctx, 978, 548, 52, 54, '#475569');
+  drawPixelRect(ctx, 982, 554, 44, 42, '#334155');
   for (let s = 0; s < 5; s++) {
-    drawPixelRect(ctx, 984 + s * 9, 554, 5, 4, '#FFD66B');
-    drawPixelRect(ctx, 984 + s * 9, 598, 5, 4, '#FFD66B');
+    drawPixelRect(ctx, 984 + s * 8, 552, 5, 4, '#FFD66B');
+    drawPixelRect(ctx, 984 + s * 8, 594, 5, 4, '#FFD66B');
   }
 
-  if (state.day >= 6) {
-    for (let tx = 1034; tx < 1168; tx += 14) {
-      drawPixelRect(ctx, tx, 566, 7, 3, '#0F172A');
-      drawPixelRect(ctx, tx, 588, 7, 3, '#0F172A');
+  if (state.flags.hardLandingPenaltyApplied) {
+    drawPixelRect(ctx, 1000, 608, 22, 8, '#7C2D12');
+    if (Math.floor(tSec * 4) % 2 === 0) {
+      drawPixelRect(ctx, 1008, 610, 6, 4, '#F59E0B');
     }
-    const roverPatrolX = 1126 + Math.sin(tSec * 0.75) * 34;
-    drawPixelRover(ctx, roverPatrolX, 558, tSec, true);
+  }
 
-    // Subtle ice-drill laser pulse
-    if (Math.sin(tSec * 3.2) > 0.35) {
-      drawPixelRect(ctx, roverPatrolX + 34, 574, 10, 3, '#79C8E8');
-      drawPixelRect(ctx, roverPatrolX + 44, 572, 6, 7, '#F8FAFC');
+  if (state.day === 1) {
+    // Day 1 Touchdown Pad with descending lander plume & concentric dust ripples
+    drawPixelRect(ctx, 1068, 560, 148, 62, '#334155');
+    ctx.strokeStyle = '#FFD66B';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1068, 560, 148, 62);
+    drawPixelRect(ctx, 1084, 572, 116, 38, '#1E293B');
+    drawDay1TouchdownLander(ctx, 1142, 588, tSec, true);
+    drawBadgeLabel(ctx, 1142, 650, 'TOUCHDOWN PAD', '#FFD66B', '#FFD66B');
+  } else if (state.day >= 6) {
+    // Day 6+ Jagged rocks, dark -200°C frost shadow pool, tire tracks, rolling Moon Rover & flickering comms arc
+    ctx.beginPath();
+    ctx.ellipse(1204, 636, 48, 26, -0.2, 0, Math.PI * 2);
+    ctx.fillStyle = '#070E24';
+    ctx.fill();
+    ctx.strokeStyle = '#79C8E8';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    drawPixelRect(ctx, 1184, 628, 8, 6, 'rgba(186, 230, 253, 0.72)');
+    drawPixelRect(ctx, 1216, 638, 10, 6, 'rgba(121, 200, 232, 0.68)');
+
+    // Jagged lunar rocks near rover path
+    drawJaggedMoonBoulder(ctx, 1066, 514, 1.1);
+    drawJaggedMoonBoulder(ctx, 1236, 524, 1.25);
+    drawJaggedMoonBoulder(ctx, 1062, 660, 0.95);
+
+    // Curved rover tracks out of East Airlock
+    for (let tx = 1032; tx < 1188; tx += 12) {
+      const curveY = Math.round(Math.sin((tx - 1032) * 0.03) * 8);
+      drawPixelRect(ctx, tx, 564 + curveY, 6, 3, '#0F172A');
+      drawPixelRect(ctx, tx, 586 + curveY, 6, 3, '#0F172A');
     }
-    drawBadgeLabel(ctx, 1142, 636, 'ROVER DEPLOYED', '#A995E8', '#A995E8');
+
+    const roverMoving = state.day === 6;
+    const roverPatrolX = roverMoving ? 1118 + Math.sin(tSec * 0.75) * 42 : 1126;
+    const roverPatrolY = roverMoving ? 556 + Math.cos(tSec * 1.5) * 8 : 558;
+    const hasIceCargo = state.flags.day6Objective === 'crater_ice_extraction';
+    const frostedWheels =
+      state.day >= 6 &&
+      (!hasIceCargo || state.flags.landingSite === 'crater_shadow' || state.flags.day3Allocation === 'battery_storage');
+    drawPixelRover(ctx, roverPatrolX, roverPatrolY, tSec, roverMoving, hasIceCargo, frostedWheels);
+
+    // Flickering comms telemetry arc between Rover mast and S-Band Relay Dish
+    const arcVisible = Math.floor(tSec * 9) % 5 !== 0;
+    if (arcVisible) {
+      ctx.save();
+      ctx.strokeStyle = state.day === 7 ? 'rgba(248, 113, 113, 0.75)' : 'rgba(121, 200, 232, 0.75)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.lineDashOffset = -tSec * 36;
+      ctx.beginPath();
+      ctx.moveTo(roverPatrolX + 14, roverPatrolY - 7);
+      ctx.quadraticCurveTo(1062, 412, dishX, dishY + 4);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    drawBadgeLabel(ctx, 1196, 678, '-200°C SHADOW', '#79C8E8', '#334155');
+    drawBadgeLabel(
+      ctx,
+      1136,
+      534,
+      hasIceCargo ? 'ICE COLLECTED' : 'ROVER ON PATROL',
+      '#A995E8',
+      '#A995E8',
+    );
   } else {
-    drawBadgeLabel(ctx, 1142, 584, 'ICE ROVER PAD', '#CBD5E1', '#475569');
+    // Days 2..5: Parked lander silhouette & Rover Pad standby
+    drawPixelRect(ctx, 1084, 548, 116, 48, '#293548');
+    drawDay1TouchdownLander(ctx, 1142, 574, tSec, false);
+    drawBadgeLabel(ctx, 1142, 622, 'LANDER PAD', '#CBD5E1', '#475569');
   }
 
-  // Day 4 CME Solar Storm Plasma Streaks across lunar regolith
+  // Day 4 dramatic X-class Solar Storm golden/magenta proton streaks across exterior
   if (solarStormActive) {
     ctx.save();
-    for (let i = 0; i < 20; i++) {
-      const sx = ((i * 107 + tSec * 210) % (BASE_CANVAS_WIDTH + 140)) - 70;
-      const sy = 152 + ((i * 67 + tSec * 130) % (BASE_CANVAS_HEIGHT - 120));
-      ctx.strokeStyle = i % 2 === 0 ? 'rgba(255, 214, 107, 0.52)' : 'rgba(248, 113, 113, 0.45)';
-      ctx.lineWidth = 2.5;
+    for (const streak of tracker.protonStreaks) {
+      ctx.strokeStyle = streak.magenta
+        ? 'rgba(232, 121, 249, 0.72)'
+        : 'rgba(255, 214, 107, 0.78)';
+      ctx.lineWidth = 2.6;
       ctx.beginPath();
-      ctx.moveTo(sx, sy);
-      ctx.lineTo(sx + 28, sy + 14);
+      ctx.moveTo(streak.x, streak.y);
+      ctx.lineTo(streak.x + streak.len, streak.y + streak.len * 0.42);
       ctx.stroke();
     }
     ctx.restore();
@@ -1816,19 +2369,52 @@ function drawRoomShellsAndFloor(
   ctx.lineWidth = 3;
   ctx.strokeRect(200, 156, 792, 524);
 
-  // Shimmering Magnetic / Water-Wall Shield Dome Arcs around base when shielding is active
-  const shieldActive = state.primary.shielding >= 60 || state.day === 4;
-  if (shieldActive) {
-    const shieldAlpha = 0.22 + 0.16 * Math.sin(tSec * 2.8);
+  // Shimmering Cyan Water-Wall Dome during Day 4 Solar Storm or active shielding
+  const partialStorm = state.day === 4 && state.flags.day4Protocol === 'partial_shielding';
+  const strongWaterShield =
+    (state.day === 4 && !partialStorm && state.primary.shielding >= 35) ||
+    state.flags.day4Protocol === 'max_shielding' ||
+    state.primary.shielding >= 60;
+
+  if (strongWaterShield || state.day === 4) {
+    const shieldAlpha = 0.24 + 0.16 * Math.sin(tSec * 3.4);
     ctx.save();
-    ctx.strokeStyle =
-      state.day === 4
-        ? `rgba(255, 214, 107, ${(shieldAlpha + 0.14).toFixed(2)})`
+    if (state.day === 4 && !partialStorm) {
+      // Full shimmering cyan water-wall dome protecting the lunar outpost
+      ctx.fillStyle = `rgba(56, 189, 248, ${(0.06 + 0.04 * Math.sin(tSec * 4)).toFixed(2)})`;
+      ctx.fillRect(190, 146, 812, 544);
+
+      ctx.strokeStyle = `rgba(121, 200, 232, ${(0.62 + 0.3 * Math.sin(tSec * 4.5)).toFixed(2)})`;
+      ctx.lineWidth = 5;
+      ctx.strokeRect(190, 146, 812, 544);
+
+      ctx.strokeStyle = '#BAE6FD';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([18, 10]);
+      ctx.lineDashOffset = -tSec * 48;
+      ctx.strokeRect(184, 140, 824, 556);
+
+      // Proton deflection bursts along top & left water-wall perimeter
+      for (let d = 0; d < 6; d++) {
+        const phase = (tSec * 1.9 + d * 0.37) % 1;
+        const bx = 220 + ((d * 145) % 740);
+        const by = d % 2 === 0 ? 142 : 692;
+        const r = 4 + phase * 12;
+        ctx.beginPath();
+        ctx.arc(bx, by, r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(224, 242, 254, ${(1 - phase) * 0.85})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    } else {
+      ctx.strokeStyle = partialStorm
+        ? `rgba(245, 158, 11, ${(shieldAlpha + 0.2).toFixed(2)})`
         : `rgba(121, 200, 232, ${shieldAlpha.toFixed(2)})`;
-    ctx.lineWidth = 3;
-    ctx.setLineDash([16, 10]);
-    ctx.lineDashOffset = -tSec * 28;
-    ctx.strokeRect(192, 148, 808, 540);
+      ctx.lineWidth = 3;
+      ctx.setLineDash([16, 10]);
+      ctx.lineDashOffset = -tSec * 28;
+      ctx.strokeRect(192, 148, 808, 540);
+    }
     ctx.restore();
   }
 
@@ -1886,22 +2472,85 @@ function drawRoomShellsAndFloor(
     drawPixelRect(ctx, d.x - 18, d.y + 5, 36, 2, '#79C8E8');
   }
 
-  // North & South hull viewports (or closing tungsten storm shutters on Day 4)
-  const shuttersClosed = state.day === 4;
+  // North & South hull viewports (closing tungsten/cyan blast shutters on Day 4 storm)
+  const shuttersClosed = state.day === 4 || state.flags.day4Protocol === 'max_shielding';
   const windowXs: readonly number[] = [292, 558, 824];
   for (const wx of windowXs) {
     if (shuttersClosed) {
       drawPixelRect(ctx, wx, 156, 72, 12, '#64748B');
       drawPixelRect(ctx, wx + 4, 158, 64, 8, '#334155');
-      drawPixelRect(ctx, wx + 26, 159, 20, 6, '#F59E0B');
+      drawPixelRect(
+        ctx,
+        wx + 26,
+        159,
+        20,
+        6,
+        state.flags.day4Protocol === 'max_shielding' ? '#79C8E8' : '#F59E0B',
+      );
 
       drawPixelRect(ctx, wx, 668, 72, 12, '#64748B');
       drawPixelRect(ctx, wx + 4, 670, 64, 8, '#334155');
-      drawPixelRect(ctx, wx + 26, 671, 20, 6, '#F59E0B');
+      drawPixelRect(
+        ctx,
+        wx + 26,
+        671,
+        20,
+        6,
+        state.flags.day4Protocol === 'max_shielding' ? '#79C8E8' : '#F59E0B',
+      );
     } else {
       drawPixelRect(ctx, wx, 158, 72, 8, '#79C8E8');
       drawPixelRect(ctx, wx, 670, 72, 8, '#79C8E8');
     }
+  }
+
+  // Day 4 partial shielding flickering amber storm warning lights along hull corners
+  if (state.day === 4 && state.flags.day4Protocol === 'partial_shielding') {
+    const warnOn = Math.floor(tSec * 6) % 2 === 0;
+    const beaconCol = warnOn ? '#F59E0B' : '#F87171';
+    drawPixelRect(ctx, 200, 156, 10, 10, beaconCol);
+    drawPixelRect(ctx, 982, 156, 10, 10, beaconCol);
+    drawPixelRect(ctx, 200, 670, 10, 10, beaconCol);
+    drawPixelRect(ctx, 982, 670, 10, 10, beaconCol);
+  }
+
+  // Day 3 Choice: Battery Storage -> Blue frost crystals on Crew Quarters walls; Essential Heating -> Warm orange glow
+  if (state.flags.day3Allocation === 'battery_storage') {
+    const med = ROOM_BOUNDS.medbay;
+    const hab = ROOM_BOUNDS.main_habitat;
+    ctx.fillStyle = 'rgba(121, 200, 232, 0.14)';
+    ctx.fillRect(med.x + 2, med.y + 2, med.width - 4, med.height - 4);
+    ctx.strokeStyle = '#79C8E8';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(med.x + 2, med.y + 2, med.width - 4, med.height - 4);
+
+    // Jagged blue frost crystals hugging Crew Quarters (Medbay + Right Habitat bunks) walls
+    const crystalXs: readonly number[] = [
+      med.x + 8,
+      med.x + 48,
+      med.x + 92,
+      med.x + 144,
+      hab.x + 560,
+      hab.x + 635,
+      hab.x + 710,
+    ];
+    for (let c = 0; c < crystalXs.length; c++) {
+      const cx = crystalXs[c];
+      if (cx === undefined) continue;
+      const wallY = c < 4 ? med.y + 4 : hab.y + 4;
+      drawPixelRect(ctx, cx, wallY, 8, 8, '#79C8E8');
+      drawPixelRect(ctx, cx + 2, wallY + 6, 4, 5, '#E0F2FE');
+      drawPixelRect(ctx, cx + 8, wallY + 2, 4, 4, '#BAE6FD');
+    }
+    drawPixelRect(ctx, med.x + 3, med.y + 52, 6, 14, '#BAE6FD');
+    drawPixelRect(ctx, med.x + med.width - 9, med.y + 62, 6, 14, '#79C8E8');
+  } else if (state.flags.day3Allocation === 'essential_heating') {
+    const med = ROOM_BOUNDS.medbay;
+    const hab = ROOM_BOUNDS.main_habitat;
+    const warmPulse = (0.11 + 0.04 * Math.sin(tSec * 2.4)).toFixed(2);
+    ctx.fillStyle = `rgba(249, 115, 22, ${warmPulse})`;
+    ctx.fillRect(med.x + 4, med.y + 4, med.width - 8, med.height - 8);
+    ctx.fillRect(hab.x + 420, hab.y + 4, 336, hab.height - 8);
   }
 }
 
@@ -1909,8 +2558,9 @@ function drawRoomEquipment(
   ctx: CanvasRenderingContext2D,
   state: Readonly<GameState>,
   tSec: number,
+  tracker: WorldEffectsTracker,
 ): void {
-  const blackout = state.day === 7 && state.commsBlackout;
+  const blackout = state.day === 7 && (state.commsBlackout || !state.eveningDecisionCompletedForDay);
 
   // 1. Comms Room (214, 170, 236x166)
   {
@@ -1971,6 +2621,17 @@ function drawRoomEquipment(
       ctx.lineTo(r.x + 56 + Math.cos(ang) * 18, r.y + 110 + Math.sin(ang) * 18);
       ctx.strokeStyle = '#9BD8A7';
       ctx.lineWidth = 2;
+      ctx.stroke();
+    } else {
+      // Crackling static zigzag inside radar scope
+      ctx.strokeStyle = '#FBBF24';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(r.x + 40, r.y + 110);
+      ctx.lineTo(r.x + 48, r.y + 103 + Math.sin(tSec * 28) * 5);
+      ctx.lineTo(r.x + 56, r.y + 116 - Math.sin(tSec * 24) * 5);
+      ctx.lineTo(r.x + 64, r.y + 105);
+      ctx.lineTo(r.x + 72, r.y + 111);
       ctx.stroke();
     }
   }
@@ -2140,8 +2801,29 @@ function drawRoomEquipment(
 
     drawPixelRect(ctx, r.x + 24, r.y + 130, 134, 28, '#334155');
     drawPixelRect(ctx, r.x + 32, r.y + 136, 118, 16, '#0F172A');
-    const faultFlash = (state.flags.hardwareFaultRisk || lowPwr) && Math.floor(tSec * 5) % 2 === 0;
+    const faultFlash = (state.flags.hardwareFaultRisk || lowPwr || state.day === 3) && Math.floor(tSec * 6) % 2 === 0;
     drawPixelRect(ctx, r.x + 42, r.y + 141, 98, 6, faultFlash ? '#F87171' : '#FFD66B');
+
+    // Day 3 / fault / overclock yellow electric spark arcs inside Power Core
+    if (
+      state.day === 3 ||
+      state.flags.day3Allocation === 'overclock_regulators' ||
+      state.flags.hardwareFaultRisk
+    ) {
+      const phase = Math.floor(tSec * 10) % 3;
+      if (phase !== 1) {
+        ctx.save();
+        ctx.strokeStyle = '#FFD66B';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(r.x + 38, r.y + 126);
+        ctx.lineTo(r.x + 62, r.y + 114 + phase * 3);
+        ctx.lineTo(r.x + 88, r.y + 128);
+        ctx.lineTo(r.x + 118, r.y + 112);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
   }
 
   // 6. Medbay & Crew Quarters (408, 492, 196x174)
@@ -2164,15 +2846,92 @@ function drawRoomEquipment(
     drawPixelRect(ctx, r.x + 114, r.y + 25, 66, 22, '#E2E8F0');
     drawPixelRect(ctx, r.x + 120, r.y + 29, 54, 14, '#9BD8A7');
 
+    // Day 3 Thermal choice hardware indicator: Heater Radiator vs Frosted Coil
+    if (state.flags.day3Allocation === 'essential_heating') {
+      drawPixelRect(ctx, r.x + 14, r.y + 56, 44, 14, '#7C2D12');
+      for (let coil = 0; coil < 4; coil++) {
+        drawPixelRect(
+          ctx,
+          r.x + 18 + coil * 10,
+          r.y + 59,
+          6,
+          8,
+          Math.floor(tSec * 5 + coil) % 2 === 0 ? '#FB923C' : '#F97316',
+        );
+      }
+    } else if (state.flags.day3Allocation === 'battery_storage') {
+      drawPixelRect(ctx, r.x + 14, r.y + 56, 44, 14, '#082F49');
+      drawPixelRect(ctx, r.x + 18, r.y + 59, 36, 8, '#79C8E8');
+      drawPixelRect(ctx, r.x + 22, r.y + 61, 8, 4, '#E0F2FE');
+    }
+
     for (let b = 0; b < 3; b++) {
       const by = r.y + 98 + b * 22;
       drawPixelRect(ctx, r.x + 18, by, 74, 17, '#475569');
       drawPixelRect(ctx, r.x + 22, by + 2, 14, 13, '#F8FAFC');
-      drawPixelRect(ctx, r.x + 38, by + 2, 50, 13, '#79C8E8');
+      drawPixelRect(
+        ctx,
+        r.x + 38,
+        by + 2,
+        50,
+        13,
+        state.flags.day3Allocation === 'battery_storage' ? '#38BDF8' : '#79C8E8',
+      );
 
       drawPixelRect(ctx, r.x + 104, by, 74, 17, '#475569');
       drawPixelRect(ctx, r.x + 108, by + 2, 14, 13, '#F8FAFC');
       drawPixelRect(ctx, r.x + 124, by + 2, 50, 13, '#A995E8');
+    }
+  }
+
+  // Day 5 slow drifting amber CO2 haze in Crew Quarters turning into crisp oxygen sparkles once ventilated
+  if (state.day === 5 || state.day >= 6) {
+    const day5Ventilated =
+      state.day >= 6 ||
+      state.anomaly?.resolved === true ||
+      state.eveningDecisionCompletedForDay;
+
+    if (state.day === 5 && !day5Ventilated) {
+      // Soft amber CO2 haze clouds drifting slowly over Medbay & Habitat Quarters
+      const med = ROOM_BOUNDS.medbay;
+      const hab = ROOM_BOUNDS.main_habitat;
+      const driftA = Math.sin(tSec * 1.1) * 8;
+      const driftB = Math.cos(tSec * 0.9) * 8;
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
+      ctx.fillRect(med.x + 6, med.y + 14, med.width - 12, med.height - 20);
+      ctx.fillRect(hab.x + 380, hab.y + 12, 370, hab.height - 20);
+
+      for (const m of tracker.co2Motes) {
+        const alpha = Math.sin((m.age / m.maxAge) * Math.PI) * 0.72;
+        ctx.fillStyle = `rgba(251, 191, 36, ${Math.max(0, alpha).toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(m.x + driftA * 0.4, m.y + driftB * 0.3, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      drawBadgeLabel(ctx, med.centerX, med.y + 162, 'CO2 HAZE', '#FBBF24', '#F59E0B');
+    } else if (day5Ventilated) {
+      // Crisp twinkling oxygen (O2) sparkles circulating cleanly
+      for (let i = 0; i < tracker.co2Motes.length; i++) {
+        const m = tracker.co2Motes[i];
+        if (!m) continue;
+        const sparkle = 0.35 + 0.65 * Math.abs(Math.sin(tSec * 3.8 + i * 0.7));
+        const col =
+          i % 2 === 0
+            ? `rgba(155, 216, 167, ${sparkle.toFixed(2)})`
+            : `rgba(121, 200, 232, ${sparkle.toFixed(2)})`;
+        drawPixelRect(ctx, m.x - 1, m.y - 3, 2, 6, col);
+        drawPixelRect(ctx, m.x - 3, m.y - 1, 6, 2, col);
+      }
+      if (state.day === 5) {
+        drawBadgeLabel(
+          ctx,
+          ROOM_BOUNDS.medbay.centerX,
+          ROOM_BOUNDS.medbay.y + 162,
+          'O2 FRESH',
+          '#9BD8A7',
+          '#9BD8A7',
+        );
+      }
     }
   }
 
@@ -2181,8 +2940,17 @@ function drawRoomEquipment(
     const r = ROOM_BOUNDS.greenhouse;
     const mode = state.flags.farmingMode;
     const stalled = state.flags.activePumpsStalled;
+    const lushDay = state.day >= 3 && !stalled;
 
     drawPixelRect(ctx, r.x + 18, r.y + 26, 146, 14, '#334155');
+    // Pipe bubble pulse inside upper horizontal pipe manifold
+    if (!stalled) {
+      for (let hb = 0; hb < 4; hb++) {
+        const bx = r.x + 26 + ((tSec * 42 + hb * 36) % 130);
+        drawPixelRect(ctx, bx, r.y + 30, 5, 5, '#BAE6FD');
+      }
+    }
+
     // Left & right transparent microalgae/water riser tubes with rising bubbles
     const pipeColor = stalled
       ? Math.floor(tSec * 4) % 2 === 0
@@ -2195,14 +2963,15 @@ function drawRoomEquipment(
     drawPixelRect(ctx, r.x + 148, r.y + 40, 12, 110, pipeColor);
 
     if (!stalled) {
-      for (let b = 0; b < 4; b++) {
-        const bubbleY = r.y + 142 - ((tSec * 36 + b * 26) % 98);
-        drawPixelRect(ctx, r.x + 26, bubbleY, 4, 4, '#F8FAFC');
-        drawPixelRect(ctx, r.x + 152, bubbleY, 4, 4, '#F8FAFC');
+      for (let b = 0; b < 5; b++) {
+        const bubbleY = r.y + 142 - ((tSec * 42 + b * 22) % 98);
+        const pulse = b % 2 === 0 ? 5 : 4;
+        drawPixelRect(ctx, r.x + 26, bubbleY, pulse, pulse, '#F8FAFC');
+        drawPixelRect(ctx, r.x + 152, bubbleY, pulse, pulse, '#F8FAFC');
       }
     }
 
-    // 3 Grow trays + soft pulsed LED grow-light glow
+    // 3 Grow trays + progressive crop lushness
     for (let row = 0; row < 3; row++) {
       const ty = r.y + 48 + row * 36;
       drawPixelRect(
@@ -2215,7 +2984,6 @@ function drawRoomEquipment(
       );
       if (mode === 'capillary_ponds') {
         drawPixelRect(ctx, r.x + 44, ty + 18, 94, 4, '#2DD4BF');
-        // Subtle cyan capillary mist particles rising
         for (let m = 0; m < 3; m++) {
           const mistY = ty + 8 - ((tSec * 14 + m * 6 + row * 4) % 12);
           drawPixelRect(ctx, r.x + 54 + m * 30, mistY, 3, 3, 'rgba(121, 200, 232, 0.72)');
@@ -2223,10 +2991,26 @@ function drawRoomEquipment(
       }
       for (let col = 0; col < 5; col++) {
         const lx = r.x + 48 + col * 18;
-        const leafColor = stalled ? '#CA8A04' : '#4ADE80';
+        const leafColor = stalled ? '#CA8A04' : lushDay ? '#22C55E' : '#4ADE80';
         const tipColor = stalled ? '#A16207' : '#9BD8A7';
-        drawPixelRect(ctx, lx, ty + 4, 10, 12, leafColor);
-        drawPixelRect(ctx, lx + 2, ty + 1, 6, 6, tipColor);
+        const extraH = lushDay ? 3 : 0;
+        drawPixelRect(ctx, lx, ty + 4 - extraH, 10, 12 + extraH, leafColor);
+        drawPixelRect(ctx, lx + 2, ty + 1 - extraH, 6, 6, tipColor);
+        if (state.day >= 4 && !stalled && (row + col) % 2 === 0) {
+          drawPixelRect(ctx, lx + 3, ty + 6, 4, 4, '#F87171');
+        }
+      }
+    }
+
+    // Day 2 (and active greenhouse) floating 1/6g microgravity water droplets
+    if ((state.day === 2 || mode === 'active_pumps') && !stalled) {
+      const count = state.day === 2 ? 9 : 4;
+      for (let d = 0; d < count; d++) {
+        const dx = r.x + 46 + ((d * 27 + Math.sin(tSec * 1.8 + d) * 8) % 92);
+        const dy = r.y + 44 + ((d * 31 + Math.cos(tSec * 2.1 + d * 1.4) * 10) % 96);
+        const dropSize = d % 3 === 0 ? 5 : 4;
+        drawPixelRect(ctx, dx, dy, dropSize, dropSize, '#38BDF8');
+        drawPixelRect(ctx, dx + 1, dy + 1, 2, 2, '#E0F2FE');
       }
     }
 
@@ -2275,15 +3059,21 @@ function drawEmergencyOverlayAndLabels(
   ctx: CanvasRenderingContext2D,
   _state: Readonly<GameState>,
   view: BaseMapViewState,
-  featured: FeaturedDayTarget,
+  activeTarget: FeaturedDayTarget,
   tSec: number,
+  missionPhase: MissionPhase,
 ): void {
-  const pulse = 0.5 + 0.5 * Math.sin(tSec * 4.2);
+  const pulse = 0.5 + 0.5 * Math.sin(tSec * (missionPhase === 'midday' ? 6.4 : 4.2));
+  const isMidday = missionPhase === 'midday';
+  const primaryColor = isMidday ? '#F87171' : '#79C8E8';
+  const secondaryColor = isMidday ? '#F59E0B' : '#BAE6FD';
+  const fillGlow = isMidday
+    ? `rgba(248, 113, 113, ${(0.08 + 0.08 * pulse).toFixed(2)})`
+    : `rgba(121, 200, 232, ${(0.07 + 0.06 * pulse).toFixed(2)})`;
 
-  // Calmly dim non-target rooms so today's featured room commands immediate focus
   for (const roomId of ROOM_ORDER) {
     const r = ROOM_BOUNDS[roomId];
-    const isTarget = roomId === featured.roomId;
+    const isTarget = roomId === activeTarget.roomId;
     const isHovered = view.hoveredRoom === roomId;
 
     if (!isTarget) {
@@ -2300,36 +3090,58 @@ function drawEmergencyOverlayAndLabels(
       continue;
     }
 
-    // Highlight today's featured room with warm golden glow
-    drawPixelRect(
-      ctx,
-      r.x,
-      r.y,
-      r.width,
-      r.height,
-      `rgba(255, 214, 107, ${(0.07 + 0.06 * pulse).toFixed(2)})`,
-    );
-    ctx.strokeStyle = isHovered ? '#FFFBEB' : '#FFD66B';
-    ctx.lineWidth = isHovered ? 4.5 : 3;
+    // Highlight target room with pulsing cyan beacon (morning) or urgent amber/coral anomaly outline (midday)
+    drawPixelRect(ctx, r.x, r.y, r.width, r.height, fillGlow);
+    ctx.strokeStyle = isHovered ? '#FFFBEB' : primaryColor;
+    ctx.lineWidth = isHovered ? 4.5 : 3.5;
     ctx.strokeRect(r.x - 1, r.y - 1, r.width + 2, r.height + 2);
+
+    if (isMidday) {
+      // Sparking alert outline & corner sparks around Midday Anomaly room
+      ctx.save();
+      ctx.strokeStyle = secondaryColor;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 8]);
+      ctx.lineDashOffset = -tSec * 48;
+      ctx.strokeRect(r.x - 5, r.y - 5, r.width + 10, r.height + 10);
+      ctx.restore();
+
+      const corners: readonly [number, number][] = [
+        [r.x, r.y],
+        [r.x + r.width, r.y],
+        [r.x, r.y + r.height],
+        [r.x + r.width, r.y + r.height],
+      ];
+      const sparkStep = Math.floor(tSec * 14) % 4;
+      for (let c = 0; c < corners.length; c++) {
+        const pt = corners[c];
+        if (!pt) continue;
+        if ((c + sparkStep) % 2 === 0) {
+          drawPixelRect(ctx, pt[0] - 4, pt[1] - 4, 8, 8, '#FFD66B');
+          drawPixelRect(ctx, pt[0] - 2, pt[1] - 8, 4, 16, '#F87171');
+          drawPixelRect(ctx, pt[0] - 8, pt[1] - 2, 16, 4, '#F87171');
+        }
+      }
+    }
 
     drawBadgeLabel(
       ctx,
       r.x + 8,
       r.y + 18,
-      featured.roomLabel.toUpperCase(),
-      '#FFD66B',
-      '#FFD66B',
+      activeTarget.roomLabel.toUpperCase(),
+      isMidday ? '#FFD66B' : '#79C8E8',
+      primaryColor,
       'left',
     );
   }
 }
 
-function drawBouncingGoldenArrow(
+function drawBouncingArrow(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   tSec: number,
+  fillColor: string,
 ): void {
   const bob = Math.sin(tSec * 5.2) * 4.5;
   const ax = Math.round(x);
@@ -2337,7 +3149,6 @@ function drawBouncingGoldenArrow(
 
   ctx.save();
   ctx.beginPath();
-  // Arrow stem + crisp chevron head pointing straight down
   ctx.moveTo(ax - 4, ay - 16);
   ctx.lineTo(ax + 4, ay - 16);
   ctx.lineTo(ax + 4, ay - 7);
@@ -2346,7 +3157,7 @@ function drawBouncingGoldenArrow(
   ctx.lineTo(ax - 10, ay - 7);
   ctx.lineTo(ax - 4, ay - 7);
   ctx.closePath();
-  ctx.fillStyle = '#FFD66B';
+  ctx.fillStyle = fillColor;
   ctx.fill();
   ctx.strokeStyle = '#0F172A';
   ctx.lineWidth = 2;
@@ -2354,16 +3165,17 @@ function drawBouncingGoldenArrow(
   ctx.restore();
 }
 
-function drawGoldenGuideTrail(
+function drawDirectionalGuideChevrons(
   ctx: CanvasRenderingContext2D,
   view: BaseMapViewState,
-  featured: FeaturedDayTarget,
+  activeTarget: FeaturedDayTarget,
   tSec: number,
+  missionPhase: MissionPhase,
 ): void {
-  const waypoints = getFeaturedGuideWaypoints(view.commanderX, view.commanderY, featured);
-  const spacing = 22;
-  const trailDots: GuidePoint[] = [];
-  let carryDist = 16;
+  const waypoints = getFeaturedGuideWaypoints(view.commanderX, view.commanderY, activeTarget);
+  const spacing = 24;
+  const chevronSamples: Array<{ x: number; y: number; angle: number }> = [];
+  let carryDist = 18;
 
   for (let i = 0; i < waypoints.length - 1; i++) {
     const a = waypoints[i];
@@ -2373,21 +3185,27 @@ function drawGoldenGuideTrail(
     const dy = b.y - a.y;
     const segLen = Math.hypot(dx, dy);
     if (segLen < 1) continue;
+    const angle = Math.atan2(dy, dx);
 
     while (carryDist <= segLen) {
       const ratio = carryDist / segLen;
-      trailDots.push({
+      chevronSamples.push({
         x: a.x + dx * ratio,
         y: a.y + dy * ratio,
+        angle,
       });
       carryDist += spacing;
     }
     carryDist -= segLen;
   }
 
-  // Faint warm floor ribbon beneath golden dots
+  const isMidday = missionPhase === 'midday';
+  const ribbonColor = isMidday ? 'rgba(248, 113, 113, 0.2)' : 'rgba(121, 200, 232, 0.2)';
+  const baseColor = isMidday ? '#F59E0B' : '#79C8E8';
+  const hotColor = isMidday ? '#F87171' : '#E0F2FE';
+
   ctx.save();
-  ctx.strokeStyle = 'rgba(255, 214, 107, 0.18)';
+  ctx.strokeStyle = ribbonColor;
   ctx.lineWidth = 8;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -2400,38 +3218,54 @@ function drawGoldenGuideTrail(
   }
   ctx.stroke();
 
-  // Animated glowing golden dotted floor trail flowing from Commander toward target crew mate
-  for (let i = 0; i < trailDots.length; i++) {
-    const dot = trailDots[i];
-    if (!dot) continue;
-    const chase = Math.max(0, Math.sin(tSec * 6.5 - i * 0.72));
-    const glowAlpha = 0.22 + chase * 0.34;
+  // Animated directional floor chevrons marching toward active specialist/anomaly room
+  for (let i = 0; i < chevronSamples.length; i++) {
+    const pt = chevronSamples[i];
+    if (!pt) continue;
+    const chase = Math.max(0, Math.sin(tSec * 7.2 - i * 0.78));
+    const scale = 0.85 + chase * 0.35;
+    ctx.save();
+    ctx.translate(pt.x, pt.y);
+    ctx.rotate(pt.angle);
+    ctx.scale(scale, scale);
+    ctx.strokeStyle = chase > 0.7 ? hotColor : baseColor;
+    ctx.lineWidth = 2.6;
     ctx.beginPath();
-    ctx.arc(dot.x, dot.y, 5.5 + chase * 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255, 214, 107, ${glowAlpha.toFixed(2)})`;
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.arc(dot.x, dot.y, 3 + chase * 1.4, 0, Math.PI * 2);
-    ctx.fillStyle = chase > 0.75 ? '#FFFBEB' : '#FFD66B';
-    ctx.fill();
+    ctx.moveTo(-4, -5);
+    ctx.lineTo(3, 0);
+    ctx.lineTo(-4, 5);
+    ctx.stroke();
+    ctx.restore();
   }
 
-  // Pulsing golden floor pad around featured crew mate & meeting spot
-  const padPulse = 0.5 + 0.5 * Math.sin(tSec * 4);
+  // Pulsing guide beacon pad around active specialist & meeting spot
+  const padPulse = 0.5 + 0.5 * Math.sin(tSec * (isMidday ? 6.2 : 4.2));
   ctx.beginPath();
-  ctx.ellipse(featured.crewX, featured.crewY + 12, 22 + padPulse * 4, 9 + padPulse * 2, 0, 0, Math.PI * 2);
-  ctx.fillStyle = `rgba(255, 214, 107, ${(0.16 + padPulse * 0.14).toFixed(2)})`;
+  ctx.ellipse(
+    activeTarget.crewX,
+    activeTarget.crewY + 12,
+    22 + padPulse * 5,
+    9 + padPulse * 2.5,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fillStyle = isMidday
+    ? `rgba(248, 113, 113, ${(0.18 + padPulse * 0.16).toFixed(2)})`
+    : `rgba(121, 200, 232, ${(0.18 + padPulse * 0.16).toFixed(2)})`;
   ctx.fill();
-  ctx.strokeStyle = '#FFD66B';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = isMidday ? '#F87171' : '#79C8E8';
+  ctx.lineWidth = 2.2;
   ctx.stroke();
 
-  const distToMeet = Math.hypot(featured.meetX - view.commanderX, featured.meetY - view.commanderY);
+  const distToMeet = Math.hypot(
+    activeTarget.meetX - view.commanderX,
+    activeTarget.meetY - view.commanderY,
+  );
   if (distToMeet > 28) {
     ctx.beginPath();
-    ctx.arc(featured.meetX, featured.meetY + 6, 9 + padPulse * 3, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255, 214, 107, 0.85)';
+    ctx.arc(activeTarget.meetX, activeTarget.meetY + 6, 9 + padPulse * 3, 0, Math.PI * 2);
+    ctx.strokeStyle = isMidday ? 'rgba(245, 158, 11, 0.9)' : 'rgba(121, 200, 232, 0.9)';
     ctx.lineWidth = 2;
     ctx.stroke();
   }
@@ -2445,8 +3279,10 @@ function drawFeaturedCrewCallout(
   y: number,
   text: string,
   tSec: number,
+  missionPhase: MissionPhase,
 ): void {
-  const pulse = 0.5 + 0.5 * Math.sin(tSec * 4.6);
+  const isMidday = missionPhase === 'midday';
+  const pulse = 0.5 + 0.5 * Math.sin(tSec * (isMidday ? 6.4 : 4.6));
   const floatY = Math.sin(tSec * 3.8) * 2;
   const px = Math.round(x);
   const badgeCenterY = Math.round(y - 36 + floatY);
@@ -2459,13 +3295,14 @@ function drawFeaturedCrewCallout(
   const left = Math.round(Math.max(12, Math.min(BASE_CANVAS_WIDTH - boxW - 12, px - boxW / 2)));
   const top = badgeCenterY - Math.round(boxH / 2);
 
-  // Pulsing outer golden aura
-  ctx.strokeStyle = `rgba(255, 214, 107, ${(0.35 + pulse * 0.45).toFixed(2)})`;
+  // Pulsing outer aura (cyan for morning guide beacon, coral/amber for midday anomaly)
+  ctx.strokeStyle = isMidday
+    ? `rgba(248, 113, 113, ${(0.45 + pulse * 0.45).toFixed(2)})`
+    : `rgba(121, 200, 232, ${(0.4 + pulse * 0.45).toFixed(2)})`;
   ctx.lineWidth = 5;
   ctx.strokeRect(left - 2, top - 2, boxW + 4, boxH + 4);
 
-  // High-contrast golden badge fill with crisp border
-  drawPixelRect(ctx, left, top, boxW, boxH, '#FFD66B');
+  drawPixelRect(ctx, left, top, boxW, boxH, isMidday ? '#F87171' : '#79C8E8');
   ctx.strokeStyle = '#0F172A';
   ctx.lineWidth = 2;
   ctx.strokeRect(left, top, boxW, boxH);
@@ -2475,8 +3312,94 @@ function drawFeaturedCrewCallout(
   ctx.fillText(text, left + boxW / 2, top + 15);
   ctx.restore();
 
-  // Friendly bouncing golden arrow right above the badge pointing down to today's crew mate
-  drawBouncingGoldenArrow(ctx, px, top - 8, tSec);
+  drawBouncingArrow(ctx, px, top - 8, tSec, isMidday ? '#F59E0B' : '#79C8E8');
+}
+
+export type CrewMapEmote = 'cold' | 'tired' | 'cough' | 'cheer' | 'shield';
+
+function drawCrewEmoteIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  emote: CrewMapEmote,
+  tSec: number,
+): void {
+  const bob = Math.round(Math.sin(tSec * 4.5) * 1.5);
+  const ex = Math.round(x);
+  const ey = Math.round(y + bob);
+
+  switch (emote) {
+    case 'cold': {
+      // Crisp 7x7 cyan pixel snowflake crystal
+      drawPixelRect(ctx, ex - 3, ey, 7, 1, '#BAE6FD');
+      drawPixelRect(ctx, ex, ey - 3, 1, 7, '#BAE6FD');
+      drawPixelRect(ctx, ex - 2, ey - 2, 1, 1, '#79C8E8');
+      drawPixelRect(ctx, ex + 2, ey - 2, 1, 1, '#79C8E8');
+      drawPixelRect(ctx, ex - 2, ey + 2, 1, 1, '#79C8E8');
+      drawPixelRect(ctx, ex + 2, ey + 2, 1, 1, '#79C8E8');
+      break;
+    }
+    case 'tired': {
+      const floatUp = Math.round((tSec * 10) % 7);
+      ctx.fillStyle = '#A995E8';
+      ctx.font = 'bold 9px Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('zZ', ex + 2, ey - floatUp);
+      break;
+    }
+    case 'cough': {
+      // Drifting amber CO2 swirl puffs
+      const puff = Math.round((tSec * 8) % 6);
+      drawPixelRect(ctx, ex - 1, ey - puff, 4, 4, '#FBBF24');
+      drawPixelRect(ctx, ex + 3, ey - 3 - puff, 3, 3, '#F59E0B');
+      break;
+    }
+    case 'cheer': {
+      // Sparkling gold 4-point star
+      const col = Math.floor(tSec * 6) % 2 === 0 ? '#FFD66B' : '#FFFBEB';
+      drawPixelRect(ctx, ex - 3, ey, 7, 1, col);
+      drawPixelRect(ctx, ex, ey - 3, 1, 7, col);
+      drawPixelRect(ctx, ex - 1, ey - 1, 3, 3, col);
+      break;
+    }
+    case 'shield': {
+      // Cyan radiation shield emblem
+      drawPixelRect(ctx, ex - 3, ey - 3, 7, 6, '#0284C7');
+      drawPixelRect(ctx, ex - 2, ey - 2, 5, 4, '#79C8E8');
+      drawPixelRect(ctx, ex - 1, ey + 3, 3, 2, '#79C8E8');
+      break;
+    }
+    default: {
+      const _exhaustive: never = emote;
+      return _exhaustive;
+    }
+  }
+}
+
+function drawCrewStatusBubble(
+  ctx: CanvasRenderingContext2D,
+  anchorX: number,
+  anchorY: number,
+  text: string,
+  accentColor: string,
+): void {
+  ctx.save();
+  ctx.font = 'bold 10px Nunito, sans-serif';
+  const metrics = ctx.measureText(text);
+  const boxW = Math.ceil(metrics.width) + 12;
+  const boxH = 16;
+  const left = Math.round(Math.max(8, Math.min(BASE_CANVAS_WIDTH - boxW - 8, anchorX - boxW / 2)));
+  const top = Math.round(Math.min(BASE_CANVAS_HEIGHT - boxH - 6, anchorY));
+
+  drawPixelRect(ctx, left, top, boxW, boxH, 'rgba(15, 23, 42, 0.92)');
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(left, top, boxW, boxH);
+
+  ctx.fillStyle = '#F8FAFC';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, left + boxW / 2, top + 11);
+  ctx.restore();
 }
 
 function drawAstronautSprite(
@@ -2490,6 +3413,11 @@ function drawAstronautSprite(
     isResting?: boolean;
     isFeatured?: boolean;
     featuredBadgeText?: string;
+    missionPhase?: MissionPhase;
+    shivering?: boolean;
+    visorShielding?: boolean;
+    emote?: CrewMapEmote | null;
+    statusBubble?: string | null;
     fatigued?: boolean;
     readyPing?: boolean;
     tSec: number;
@@ -2513,7 +3441,7 @@ function drawAstronautSprite(
     return;
   }
 
-  // 4-frame walk cycle or subtle idle breathing bob
+  // 4-frame walk cycle or subtle idle breathing bob (plus cold shiver tremor when quarters unheated)
   const frameIndex = options.walking ? Math.floor(options.walkPhase) % 4 : 1;
   const strideBob =
     options.walking && (frameIndex === 0 || frameIndex === 2)
@@ -2521,8 +3449,11 @@ function drawAstronautSprite(
       : !options.walking
         ? Math.sin(options.tSec * 2.4 + options.phaseOffset) * 1.1
         : 0;
+  const shiverOffsetX = options.shivering
+    ? Math.sin(options.tSec * 28 + options.phaseOffset * 2) * 1.4
+    : 0;
 
-  const px = Math.round(x);
+  const px = Math.round(x + shiverOffsetX);
   const py = Math.round(y + strideBob);
 
   // Drop shadow
@@ -2537,14 +3468,16 @@ function drawAstronautSprite(
   drawPixelRect(ctx, px - 6, py + 6 + leftBootOffset, 5, 6, '#CBD5E1');
   drawPixelRect(ctx, px + 1, py + 6 + rightBootOffset, 5, 6, '#CBD5E1');
 
-  // Torso & swinging arms
+  // Torso & swinging arms (right arm raises over visor when shielding against partial solar storm)
   drawPixelRect(ctx, px - 8, py - 5, 16, 12, '#F8FAFC');
   drawPixelRect(ctx, px - 8, py - 4, 16, 3, accentColor);
 
   const leftArmY = py - 3 + (frameIndex === 0 ? 2 : frameIndex === 2 ? -2 : 0);
-  const rightArmY = py - 3 + (frameIndex === 0 ? -2 : frameIndex === 2 ? 2 : 0);
+  const rightArmY = options.visorShielding
+    ? py - 15
+    : py - 3 + (frameIndex === 0 ? -2 : frameIndex === 2 ? 2 : 0);
   drawPixelRect(ctx, px - 11, leftArmY, 3, 7, '#E2E8F0');
-  drawPixelRect(ctx, px + 8, rightArmY, 3, 7, '#E2E8F0');
+  drawPixelRect(ctx, px + 8, rightArmY, 3, 7, options.visorShielding ? '#FFD66B' : '#E2E8F0');
 
   // Oxygen PLSS backpack when facing up or side
   if (options.facing === 'up') {
@@ -2564,7 +3497,14 @@ function drawAstronautSprite(
       options.facing === 'left' ? -2 : options.facing === 'right' ? 2 : 0;
     const vx = px - 5 + visorShiftX;
     const vy = py - 14;
-    drawPixelRect(ctx, vx, vy, 10, 7, options.isCommander ? '#263C75' : '#1E293B');
+    drawPixelRect(
+      ctx,
+      vx,
+      vy,
+      10,
+      7,
+      options.visorShielding ? '#92400E' : options.isCommander ? '#263C75' : '#1E293B',
+    );
 
     const blinkCycle = (options.tSec + options.phaseOffset * 0.7) % 4.1;
     const isBlinking = blinkCycle > 3.96;
@@ -2578,9 +3518,36 @@ function drawAstronautSprite(
     drawPixelRect(ctx, vx + 1, vy + 1, 4, 1, 'rgba(121, 200, 232, 0.75)');
   }
 
-  // Pulsing golden badge ONLY above today's featured crew mate; calm subtle name pill on others
+  // Tiny puffing cold-breath pixels when shivering in battery-save chill
+  if (options.shivering) {
+    const breathPhase = (options.tSec * 2 + options.phaseOffset) % 1;
+    const bx = px + 6 + Math.round(breathPhase * 8);
+    const by = py - 10 - Math.round(breathPhase * 4);
+    drawPixelRect(
+      ctx,
+      bx,
+      by,
+      3,
+      3,
+      `rgba(186, 230, 253, ${(0.85 * (1 - breathPhase)).toFixed(2)})`,
+    );
+  }
+
+  // Optional pixel reaction emote next to helmet
+  if (options.emote) {
+    drawCrewEmoteIcon(ctx, px + 14, py - 16, options.emote, options.tSec);
+  }
+
+  // Pulsing guide badge above today's featured specialist; calm name pill on others
   if (options.isFeatured && options.featuredBadgeText) {
-    drawFeaturedCrewCallout(ctx, px, py, options.featuredBadgeText, options.tSec);
+    drawFeaturedCrewCallout(
+      ctx,
+      px,
+      py,
+      options.featuredBadgeText,
+      options.tSec,
+      options.missionPhase ?? 'morning',
+    );
   } else {
     drawBadgeLabel(
       ctx,
@@ -2590,6 +3557,10 @@ function drawAstronautSprite(
       options.isCommander ? '#FFD66B' : '#CBD5E1',
       options.isCommander ? '#FFD66B' : '#334155',
     );
+  }
+
+  if (options.statusBubble) {
+    drawCrewStatusBubble(ctx, px, py + 18, options.statusBubble, accentColor);
   }
 }
 
@@ -2748,13 +3719,82 @@ function resolveCommanderMotion(
   };
 }
 
+function pickChoiceStatusBubble(
+  state: Readonly<GameState>,
+  featuredCrewId: CrewId,
+): { readonly crewId: OnBaseCrewId; readonly text: string } | null {
+  const fallback: OnBaseCrewId = featuredCrewId === 'omar' ? 'yassin' : 'omar';
+  const pickNonFeatured = (preferred: OnBaseCrewId): OnBaseCrewId => {
+    const chosen = featuredCrewId === preferred ? fallback : preferred;
+    const rt = state.specialists[chosen];
+    if (rt.assignment === 'resting' || rt.forcedRest) {
+      for (const candidate of ON_BASE_CREW_IDS) {
+        if (
+          candidate !== featuredCrewId &&
+          state.specialists[candidate].assignment !== 'resting' &&
+          !state.specialists[candidate].forcedRest
+        ) {
+          return candidate;
+        }
+      }
+    }
+    return chosen;
+  };
+
+  if (state.day === 4 && state.flags.day4Protocol === 'max_shielding') {
+    return { crewId: pickNonFeatured('omar'), text: 'Water-wall blocked the storm!' };
+  }
+  if (state.day === 4 && state.flags.day4Protocol === 'partial_shielding') {
+    return { crewId: pickNonFeatured('omar'), text: 'Solar flare hot! Visors down!' };
+  }
+  const day5Ventilated =
+    state.anomaly?.resolved === true || state.eveningDecisionCompletedForDay;
+  if (state.day === 5 && !day5Ventilated) {
+    return { crewId: pickNonFeatured('taha'), text: 'CO2 haze drifting! Open vents!' };
+  }
+  if (state.day === 5 && day5Ventilated) {
+    return { crewId: pickNonFeatured('taha'), text: 'Fresh O2! Crew breathing easy!' };
+  }
+  if (state.flags.day3Allocation === 'battery_storage' && state.day >= 3 && state.day <= 4) {
+    return { crewId: pickNonFeatured('omar'), text: 'Brrr! Cold rooms saved battery!' };
+  }
+  if (state.flags.day3Allocation === 'essential_heating' && state.day >= 3 && state.day <= 4) {
+    return { crewId: pickNonFeatured('omar'), text: 'Heaters warm! Crew feeling cozy!' };
+  }
+  if (state.flags.day3Allocation === 'overclock_regulators' && state.day >= 3) {
+    return { crewId: pickNonFeatured('albaraa'), text: 'Overclocked! Watch those sparks!' };
+  }
+  if (state.flags.day6Objective === 'crater_ice_extraction' && state.day >= 6) {
+    return { crewId: pickNonFeatured('yassin'), text: 'Ice canisters packed on Rover!' };
+  }
+  if (
+    state.flags.farmingMode === 'active_pumps' &&
+    !state.flags.activePumpsStalled &&
+    state.day >= 2
+  ) {
+    return { crewId: pickNonFeatured('sayed'), text: 'Pumps humming! Greens thriving!' };
+  }
+  if (state.flags.farmingMode === 'capillary_ponds' && state.day >= 2) {
+    return { crewId: pickNonFeatured('sayed'), text: 'Wicks steady! Gardener tired...' };
+  }
+  if (state.flags.landingSite === 'sunlit_ridge') {
+    return { crewId: pickNonFeatured('albaraa'), text: 'Sunlit ridge powers extra arrays!' };
+  }
+  if (state.flags.landingSite === 'crater_shadow') {
+    return { crewId: pickNonFeatured('yassin'), text: 'Crater ice berm shields base!' };
+  }
+  return null;
+}
+
 export function drawTopDownBase(
   ctx: CanvasRenderingContext2D,
   state: Readonly<GameState>,
   viewOrElapsedMs: BaseMapViewState | number,
   elapsedMs?: number,
 ): void {
-  const featured = getFeaturedDayTarget(state.day);
+  const missionPhase: MissionPhase =
+    typeof viewOrElapsedMs === 'number' ? 'morning' : (viewOrElapsedMs.missionPhase ?? 'morning');
+  const featured = getActiveDayTarget(state.day, missionPhase, state);
   const view: BaseMapViewState =
     typeof viewOrElapsedMs === 'number'
       ? {
@@ -2766,11 +3806,13 @@ export function drawTopDownBase(
           selectedRoom: featured.roomId,
           animTick: Math.floor((viewOrElapsedMs / 1000) * 60),
           elapsedMs: viewOrElapsedMs,
+          missionPhase,
         }
       : viewOrElapsedMs;
 
   const timeMs = elapsedMs ?? view.elapsedMs ?? view.animTick * (1000 / 60);
   const tSec = timeMs / 1000;
+  const tracker = advanceWorldEffectsTracker(ctx, timeMs);
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;
@@ -2778,11 +3820,11 @@ export function drawTopDownBase(
     ctx.scale(ctx.canvas.width / BASE_CANVAS_WIDTH, ctx.canvas.height / BASE_CANVAS_HEIGHT);
   }
 
-  drawExteriorSurface(ctx, state, tSec);
+  drawExteriorSurface(ctx, state, tSec, tracker, missionPhase);
   drawRoomShellsAndFloor(ctx, state, tSec);
-  drawRoomEquipment(ctx, state, tSec);
-  drawEmergencyOverlayAndLabels(ctx, state, view, featured, tSec);
-  drawGoldenGuideTrail(ctx, view, featured, tSec);
+  drawRoomEquipment(ctx, state, tSec, tracker);
+  drawEmergencyOverlayAndLabels(ctx, state, view, featured, tSec, missionPhase);
+  drawDirectionalGuideChevrons(ctx, view, featured, tSec, missionPhase);
 
   const motion = resolveCommanderMotion(ctx, view, timeMs);
 
@@ -2793,9 +3835,36 @@ export function drawTopDownBase(
     ctx.fillRect(Math.round(puff.x), Math.round(puff.y), puff.size, puff.size);
   }
 
+  const shivering =
+    state.flags.day3Allocation === 'battery_storage' &&
+    (state.day === 3 || state.day === 4 || state.primary.power < 45);
+  const visorShielding = state.day === 4 && state.flags.day4Protocol === 'partial_shielding';
+  const day5Ventilated =
+    state.anomaly?.resolved === true || state.eveningDecisionCompletedForDay;
+  const activeBubble = pickChoiceStatusBubble(state, featured.crewId);
+
+  const resolveCrewEmote = (id: OnBaseCrewId): CrewMapEmote | null => {
+    if (state.day === 4 && state.flags.day4Protocol === 'max_shielding') {
+      return id === 'sayed' || id === 'taha' ? 'shield' : null;
+    }
+    if (shivering) return 'cold';
+    if (state.day === 5 && id === 'omar') {
+      return day5Ventilated ? 'cheer' : 'cough';
+    }
+    if (
+      (state.flags.farmingMode === 'capillary_ponds' && state.day >= 2 && id === 'sayed') ||
+      state.specialists[id].fatigue >= 65
+    ) {
+      return 'tired';
+    }
+    if (id === featured.crewId && missionPhase === 'morning') return 'cheer';
+    return null;
+  };
+
   // Draw calm non-featured Specialists first, then featured crew mate on top
   let restingCount = 0;
   let featuredSlot: {
+    id: OnBaseCrewId;
     x: number;
     y: number;
     accentColor: string;
@@ -2815,6 +3884,7 @@ export function drawTopDownBase(
 
     if (id === featured.crewId) {
       featuredSlot = {
+        id,
         x: pos.x,
         y: pos.y,
         accentColor: profile.accentColor,
@@ -2824,10 +3894,18 @@ export function drawTopDownBase(
       continue;
     }
 
-    drawAstronautSprite(ctx, pos.x, pos.y, profile.accentColor, shortName, {
+    // Offset non-featured co-located crew away from featured specialist slot during midday anomalies
+    const spriteX = !pos.resting && pos.roomId === featured.roomId ? pos.x - 36 : pos.x;
+
+    drawAstronautSprite(ctx, spriteX, pos.y, profile.accentColor, shortName, {
       isResting: pos.resting,
       isFeatured: false,
-      fatigued: false,
+      shivering: !pos.resting && shivering,
+      visorShielding: !pos.resting && visorShielding,
+      emote: pos.resting ? null : resolveCrewEmote(id),
+      statusBubble:
+        !pos.resting && activeBubble && activeBubble.crewId === id ? activeBubble.text : null,
+      fatigued: state.specialists[id].fatigue >= 65,
       readyPing: false,
       tSec,
       phaseOffset: i * 1.37,
@@ -2848,6 +3926,10 @@ export function drawTopDownBase(
         isResting: false,
         isFeatured: true,
         featuredBadgeText: featured.badgeText,
+        missionPhase,
+        shivering,
+        visorShielding,
+        emote: resolveCrewEmote(featuredSlot.id),
         fatigued: false,
         readyPing: false,
         tSec,
@@ -2862,6 +3944,8 @@ export function drawTopDownBase(
   // Draw Mission Commander sprite with 4-frame stride cycle
   drawAstronautSprite(ctx, view.commanderX, view.commanderY, '#FFD66B', 'COMMANDER', {
     isCommander: true,
+    shivering,
+    visorShielding,
     tSec,
     phaseOffset: 0.25,
     walking: motion.moving,
@@ -3117,6 +4201,38 @@ function drawCutsceneOutpostHorizon(
   }
 }
 
+function drawEarthRadioPulseArc(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  tSec: number,
+  color = '#79C8E8',
+): void {
+  ctx.save();
+  ctx.setLineDash([10, 8]);
+  ctx.lineDashOffset = -tSec * 56;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.quadraticCurveTo((x1 + x2) / 2, Math.min(y1, y2) - 52, x2, y2);
+  ctx.stroke();
+
+  const pulseProgress = (tSec * 0.38) % 1;
+  const cx = (x1 + x2) / 2;
+  const cy = Math.min(y1, y2) - 52;
+  const inv = 1 - pulseProgress;
+  const px = inv * inv * x1 + 2 * inv * pulseProgress * cx + pulseProgress * pulseProgress * x2;
+  const py = inv * inv * y1 + 2 * inv * pulseProgress * cy + pulseProgress * pulseProgress * y2;
+  ctx.fillStyle = '#FFD66B';
+  ctx.beginPath();
+  ctx.arc(px, py, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawOpeningScene(
   ctx: CanvasRenderingContext2D,
   sceneIndex: number,
@@ -3125,94 +4241,205 @@ function drawOpeningScene(
 ): void {
   switch (sceneIndex) {
     case 0: {
-      // Scene 1: Rocket flying from gleaming Earth to Shackleton Crater
-      drawCutsceneStarfield(ctx, ambientSec, -48, true);
-      drawCutsceneEarth(ctx, 210, 172, 92, ambientSec);
+      // Scene 1: Artemis deep-space approach & 2.6s Earth radio pulse
+      drawCutsceneStarfield(ctx, ambientSec, -44, true);
+      drawCutsceneEarth(ctx, 205, 196, 94, ambientSec);
 
-      // Faint golden flight arc from Earth toward the Moon horizon
-      ctx.save();
-      ctx.setLineDash([8, 10]);
-      ctx.lineDashOffset = -ambientSec * 45;
-      ctx.strokeStyle = 'rgba(255, 214, 107, 0.45)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(295, 205);
-      ctx.quadraticCurveTo(600, 130, 895, 392);
-      ctx.stroke();
-      ctx.restore();
+      const shipX = 470 + Math.min(280, sceneSec * 52);
+      const shipY = 238 + Math.sin(ambientSec * 1.8) * 10 + Math.min(90, sceneSec * 16);
 
-      // Shimmering Shackleton Crater Ridge at bottom
+      // Animated 2.6s Earth-Moon S-Band radio pulse arc
+      drawEarthRadioPulseArc(ctx, 294, 184, shipX - 40, shipY, ambientSec, '#79C8E8');
+      drawBadgeLabel(ctx, 470, 118, '2.6s EARTH RADIO PULSE', '#79C8E8', '#79C8E8');
+
+      // Curved Lunar South Pole crescent below right horizon
       ctx.fillStyle = '#182235';
       ctx.beginPath();
-      ctx.moveTo(0, CUTSCENE_H);
-      ctx.lineTo(0, 520);
-      ctx.lineTo(180, 460);
-      ctx.lineTo(360, 540);
-      ctx.lineTo(540, 480);
-      ctx.lineTo(740, 550);
-      ctx.lineTo(940, 445);
-      ctx.lineTo(1140, 505);
-      ctx.lineTo(1280, 460);
-      ctx.lineTo(1280, CUTSCENE_H);
-      ctx.closePath();
+      ctx.ellipse(980, 690, 420, 170, 0, Math.PI, Math.PI * 2);
       ctx.fill();
-
       ctx.strokeStyle = '#FFD66B';
       ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.moveTo(0, 520);
-      ctx.lineTo(180, 460);
-      ctx.lineTo(360, 540);
-      ctx.lineTo(540, 480);
-      ctx.lineTo(740, 550);
-      ctx.lineTo(940, 445);
-      ctx.lineTo(1140, 505);
-      ctx.lineTo(1280, 460);
+      ctx.ellipse(980, 690, 420, 170, 0, Math.PI * 1.05, Math.PI * 1.95);
       ctx.stroke();
 
-      // Shimmering crater ice bowl
-      const shimmer = 0.5 + 0.5 * Math.sin(ambientSec * 3.5);
-      ctx.fillStyle = '#090F24';
-      ctx.beginPath();
-      ctx.ellipse(810, 620, 290, 58, 0, 0, Math.PI * 2);
-      ctx.fill();
-      drawPixelRect(ctx, 730, 608, 16, 10, `rgba(121, 200, 232, ${(0.45 + shimmer * 0.45).toFixed(2)})`);
-      drawPixelRect(ctx, 848, 622, 20, 10, `rgba(121, 200, 232, ${(0.45 + shimmer * 0.45).toFixed(2)})`);
-
-      // Orion rocket cruising from Earth toward Shackleton Crater
-      const shipX = 430 + Math.min(340, sceneSec * 66);
-      const shipY = 200 + Math.sin(ambientSec * 1.8) * 12 + Math.min(115, sceneSec * 22);
       drawOrionSpacecraft(ctx, shipX, shipY, 1.45, 0.95, ambientSec, true);
       break;
     }
 
     case 1: {
-      // Scene 2: Touchdown at Shackleton Crater with warm golden thruster dust
-      drawCutsceneStarfield(ctx, ambientSec, -8);
-      drawCutsceneEarth(ctx, 205, 148, 66, ambientSec);
+      // Scene 2: Lunar South Pole sunlight vs icy crater dilemma + 6 specialists (incl. Abdul on Earth Link)
+      drawCutsceneStarfield(ctx, ambientSec, -10);
+      drawCutsceneEarth(ctx, 182, 140, 60, ambientSec);
 
-      const touchdownProgress = Math.min(1, sceneSec / 1.4);
+      // Left Sunlit Solar Ridge vs Right Deep Icy Shackleton Crater Horizon
+      const sunGrad = ctx.createRadialGradient(260, 410, 20, 260, 410, 260);
+      sunGrad.addColorStop(0, 'rgba(255, 214, 107, 0.35)');
+      sunGrad.addColorStop(1, 'rgba(255, 214, 107, 0)');
+      ctx.fillStyle = sunGrad;
+      ctx.fillRect(0, 180, 560, 320);
+
+      // Sunlit mountain ridge (left) + deep ice crater rim (right)
+      ctx.fillStyle = '#1E293B';
+      ctx.beginPath();
+      ctx.moveTo(0, CUTSCENE_H);
+      ctx.lineTo(0, 445);
+      ctx.lineTo(190, 395);
+      ctx.lineTo(420, 455);
+      ctx.lineTo(640, 480);
+      ctx.lineTo(830, 565);
+      ctx.lineTo(1060, 560);
+      ctx.lineTo(1280, 445);
+      ctx.lineTo(1280, CUTSCENE_H);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#FFD66B';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, 445);
+      ctx.lineTo(190, 395);
+      ctx.lineTo(420, 455);
+      ctx.lineTo(640, 480);
+      ctx.stroke();
+
+      // Crater shadow glowing ice deposits
+      ctx.fillStyle = '#091128';
+      ctx.beginPath();
+      ctx.ellipse(950, 545, 240, 58, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#79C8E8';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      const iceGlow = (0.55 + 0.4 * Math.sin(ambientSec * 3.4)).toFixed(2);
+      drawPixelRect(ctx, 845, 535, 18, 12, `rgba(121, 200, 232, ${iceGlow})`);
+      drawPixelRect(ctx, 935, 548, 22, 12, `rgba(186, 230, 253, ${iceGlow})`);
+      drawPixelRect(ctx, 1030, 532, 16, 12, `rgba(121, 200, 232, ${iceGlow})`);
+
+      drawBadgeLabel(ctx, 210, 368, 'SUNLIGHT RIDGE', '#FFD66B', '#FFD66B');
+      drawBadgeLabel(ctx, 950, 474, 'ICY CRATER SHADOW', '#79C8E8', '#79C8E8');
+
+      // Holographic Earth Uplink Pod for Earth Flight Lead Abdul (#6)
+      drawEarthRadioPulseArc(ctx, 182, 200, 146, 410, ambientSec, '#79C8E8');
+      drawPixelRect(ctx, 94, 412, 104, 46, '#0F172A');
+      ctx.strokeStyle = '#79C8E8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(94, 412, 104, 46);
+      drawBadgeLabel(ctx, 146, 402, 'EARTH: ABDUL', '#79C8E8', '#79C8E8');
+
+      // All 5 On-Base Specialists waving on Lunar Horizon (= 6 Specialists total!)
+      for (let i = 0; i < ON_BASE_CREW_IDS.length; i++) {
+        const id = ON_BASE_CREW_IDS[i];
+        if (!id) continue;
+        const prof = CREW_PROFILES[id];
+        const shortName = prof.name.split(' ')[0] ?? id;
+        const bounce = Math.abs(Math.sin(ambientSec * 3.2 + i * 0.7)) * 4;
+        drawAstronautSprite(ctx, 410 + i * 112, 466 - bounce, prof.accentColor, shortName, {
+          tSec: ambientSec,
+          phaseOffset: i * 0.9,
+          walking: false,
+          walkPhase: 0,
+          facing: 'down',
+        });
+      }
+      break;
+    }
+
+    case 2: {
+      // Scene 3: Spacesuit & Base Life Support (O2/CO2, Solar kW, Shield mSv)
+      drawCutsceneStarfield(ctx, ambientSec, -6);
+      drawCutsceneEarth(ctx, 180, 144, 56, ambientSec);
       drawCutsceneOutpostHorizon(ctx, ambientSec, {
-        litLevel: 0.2,
+        litLevel: 1,
         emergencyAmber: false,
-        beaconGreen: false,
+        beaconGreen: true,
         frosted: false,
         roverPresent: true,
+        flagWave: true,
       });
 
-      // Landing pad
-      drawPixelRect(ctx, 1030, 464, 170, 16, '#475569');
-      drawPixelRect(ctx, 1052, 464, 126, 6, '#FFD66B');
+      // 3 crisp illuminated cutaway Life Support module cards above the outpost
+      const panels: readonly { x: number; title: string; metric: string; color: string }[] = [
+        { x: 280, title: 'LIFE SUPPORT', metric: 'O2 / CO2 SCRUB', color: '#9BD8A7' },
+        { x: 640, title: 'SOLAR POWER', metric: 'SOLAR kW GRID', color: '#FFD66B' },
+        { x: 1000, title: 'WATER SHIELD', metric: 'RADIATION mSv', color: '#79C8E8' },
+      ];
+      for (let p = 0; p < panels.length; p++) {
+        const card = panels[p];
+        if (!card) continue;
+        const bob = Math.sin(ambientSec * 2.5 + p * 1.1) * 4;
+        const cx = card.x - 108;
+        const cy = 198 + bob;
+        drawPixelRect(ctx, cx, cy, 216, 86, 'rgba(15, 23, 42, 0.94)');
+        ctx.strokeStyle = card.color;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(cx, cy, 216, 86);
 
-      // Descending & touching-down lander
-      const landerY = 250 + touchdownProgress * 168;
-      const thrust = touchdownProgress < 0.96 ? 1.0 - touchdownProgress * 0.6 : 0;
+        ctx.fillStyle = card.color;
+        ctx.font = 'bold 14px Nunito, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(card.title, card.x, cy + 28);
+
+        ctx.fillStyle = '#F8FAFC';
+        ctx.font = 'bold 16px Nunito, sans-serif';
+        ctx.fillText(card.metric, card.x, cy + 58);
+      }
+
+      drawAstronautSprite(ctx, 560, 464, '#FFD66B', 'COMMANDER', {
+        isCommander: true,
+        tSec: ambientSec,
+        phaseOffset: 0,
+        walking: false,
+        walkPhase: 0,
+        facing: 'down',
+      });
+      drawAstronautSprite(ctx, 690, 464, CREW_PROFILES.omar.accentColor, 'Omar', {
+        tSec: ambientSec,
+        phaseOffset: 1.2,
+        walking: false,
+        walkPhase: 0,
+        facing: 'left',
+      });
+      break;
+    }
+
+    case 3:
+    default: {
+      // Scene 4: Final descent (< 3.0 m/s limit) transitioning into Day 1
+      drawCutsceneStarfield(ctx, ambientSec, -8);
+      drawCutsceneEarth(ctx, 205, 148, 64, ambientSec);
+
+      const touchdownProgress = Math.min(1, sceneSec / 1.8);
+      drawCutsceneOutpostHorizon(ctx, ambientSec, {
+        litLevel: 0.4 + touchdownProgress * 0.6,
+        emergencyAmber: false,
+        beaconGreen: touchdownProgress > 0.75,
+        frosted: false,
+        roverPresent: false,
+        flagWave: true,
+      });
+
+      // Touchdown Pad + safe < 3.0 m/s descent meter badge
+      drawPixelRect(ctx, 1020, 464, 190, 16, '#475569');
+      drawPixelRect(ctx, 1044, 464, 142, 6, '#FFD66B');
+      const landerY = 186 + touchdownProgress * 232;
+      const thrust = touchdownProgress < 0.96 ? 1.0 - touchdownProgress * 0.55 : 0;
       drawOrionSpacecraft(ctx, 1115, landerY, 0.98, thrust, ambientSec, false);
 
-      // Settling golden regolith dust clouds around landing pad
-      if (sceneSec > 0.65 && sceneSec < 4.5) {
-        const dustProgress = (sceneSec - 0.65) / 3.85;
-        const alpha = Math.max(0, 0.65 * (1 - dustProgress));
+      const speedText = touchdownProgress < 0.95 ? 'DESCENT < 3.0 m/s' : 'TOUCHDOWN SAFE!';
+      drawBadgeLabel(
+        ctx,
+        1115,
+        136,
+        speedText,
+        touchdownProgress < 0.95 ? '#FFD66B' : '#9BD8A7',
+        touchdownProgress < 0.95 ? '#FFD66B' : '#9BD8A7',
+      );
+
+      if (touchdownProgress > 0.45) {
+        const dustProgress = Math.min(1, (touchdownProgress - 0.45) / 0.55);
+        const alpha = Math.max(0, 0.72 * (1 - dustProgress * 0.5));
         for (let d = 0; d < 10; d++) {
           const dir = d % 2 === 0 ? -1 : 1;
           const dx = 1115 + dir * (28 + d * 12 + dustProgress * 95);
@@ -3223,45 +4450,13 @@ function drawOpeningScene(
           ctx.fill();
         }
       }
-      break;
-    }
 
-    case 2:
-    default: {
-      // Scene 3: Base lights turning on across Moon Base Artemis
-      drawCutsceneStarfield(ctx, ambientSec, -6);
-      drawCutsceneEarth(ctx, 195, 168, 72, ambientSec);
-
-      const litLevel = Math.min(1, 0.15 + sceneSec / 1.4);
-      drawCutsceneOutpostHorizon(ctx, ambientSec, {
-        litLevel,
-        emergencyAmber: false,
-        beaconGreen: litLevel > 0.7,
-        frosted: false,
-        roverPresent: true,
-        flagWave: true,
-      });
-
-      // Parked landed shuttle & friendly welcome crew standing beneath glowing habitat lights
-      drawPixelRect(ctx, 1030, 464, 170, 16, '#475569');
-      drawPixelRect(ctx, 1052, 464, 126, 6, '#FFD66B');
-      drawOrionSpacecraft(ctx, 1115, 418, 0.95, 0, ambientSec, false);
-
-      const bounceCmd = litLevel > 0.7 ? Math.abs(Math.sin(ambientSec * 4.2)) * 5 : 0;
-      drawAstronautSprite(ctx, 520, 464 - bounceCmd, '#FFD66B', 'COMMANDER', {
-        isCommander: true,
+      drawAstronautSprite(ctx, 540, 464, CREW_PROFILES.albaraa.accentColor, 'Al-Baraa', {
         tSec: ambientSec,
-        phaseOffset: 0,
+        phaseOffset: 0.4,
         walking: false,
         walkPhase: 0,
-        facing: 'down',
-      });
-      drawAstronautSprite(ctx, 640, 464, '#FFD66B', 'Al-Baraa', {
-        tSec: ambientSec,
-        phaseOffset: 1.1,
-        walking: false,
-        walkPhase: 0,
-        facing: 'left',
+        facing: 'right',
       });
       break;
     }
@@ -3271,14 +4466,21 @@ function drawOpeningScene(
 function drawEndingScene(
   ctx: CanvasRenderingContext2D,
   ending: EndingId,
-  _sceneIndex: number,
+  sceneIndex: number,
   sceneSec: number,
   ambientSec: number,
+  state: Readonly<GameState>,
 ): void {
+  const isSunlit = state.flags.landingSite === 'sunlit_ridge';
+  const isCrater = state.flags.landingSite === 'crater_shadow';
+  const lushGreenhouse = !state.flags.activePumpsStalled && state.flags.farmingMode !== null;
+  const maxShield = state.flags.day4Protocol === 'max_shielding' || state.primary.shielding >= 55;
+  const hasIceCargo = state.flags.day6Objective === 'crater_ice_extraction';
+  const frosted = state.flags.day3Allocation === 'battery_storage';
+
   switch (ending) {
     case 'SCIENTIFIC_BREAKTHROUGH': {
       drawCutsceneStarfield(ctx, ambientSec, 12);
-
       // Golden sunrise over Shackleton Ridge
       const sunGlow = ctx.createRadialGradient(1040, 468, 24, 1040, 468, 280);
       sunGlow.addColorStop(0, 'rgba(255, 214, 107, 0.9)');
@@ -3301,40 +4503,54 @@ function drawEndingScene(
         flagWave: true,
       });
 
-      // Celebratory fireworks & glowing data beam to Earth
-      const colors: readonly string[] = ['#FFD66B', '#79C8E8', '#9BD8A7', '#A995E8'];
-      for (let fw = 0; fw < 4; fw++) {
-        const fx = 380 + fw * 195;
-        const fy = 155 + (fw % 2) * 52;
-        const burst = ((ambientSec * 1.4 + fw * 0.45) % 1) * 46;
-        const col = colors[fw] ?? '#FFD66B';
-        ctx.fillStyle = col;
-        for (let ray = 0; ray < 8; ray++) {
-          const ang = (ray * Math.PI) / 4;
-          drawPixelRect(
-            ctx,
-            fx + Math.cos(ang) * burst,
-            fy + Math.sin(ang) * burst,
-            4,
-            4,
-            col,
-          );
-        }
+      if (isCrater || hasIceCargo) {
+        drawPixelRect(ctx, 820, 460, 18, 12, '#79C8E8');
+        drawPixelRect(ctx, 844, 462, 14, 10, '#E0F2FE');
+      }
+      if (isSunlit) {
+        drawPixelRect(ctx, 322, 412, 48, 20, '#263C75');
+        ctx.strokeStyle = '#FFD66B';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(322, 412, 48, 20);
       }
 
-      ctx.save();
-      ctx.strokeStyle = 'rgba(155, 216, 167, 0.8)';
-      ctx.lineWidth = 4;
-      ctx.setLineDash([12, 8]);
-      ctx.lineDashOffset = -ambientSec * 60;
-      ctx.beginPath();
-      ctx.moveTo(950, 314);
-      ctx.lineTo(258, 174);
-      ctx.stroke();
-      ctx.restore();
-
-      const landerY = Math.min(372, 110 + sceneSec * 78);
-      drawOrionSpacecraft(ctx, 1135, landerY, 0.9, landerY < 368 ? 1 : 0.2, ambientSec, false);
+      if (sceneIndex === 0) {
+        // Scene 1: Golden Sunrise & Celebratory Science Fireworks
+        const colors: readonly string[] = ['#FFD66B', '#79C8E8', '#9BD8A7', '#A995E8'];
+        for (let fw = 0; fw < 4; fw++) {
+          const fx = 380 + fw * 195;
+          const fy = 155 + (fw % 2) * 52;
+          const burst = ((ambientSec * 1.4 + fw * 0.45) % 1) * 46;
+          const col = colors[fw] ?? '#FFD66B';
+          for (let ray = 0; ray < 8; ray++) {
+            const ang = (ray * Math.PI) / 4;
+            drawPixelRect(ctx, fx + Math.cos(ang) * burst, fy + Math.sin(ang) * burst, 4, 4, col);
+          }
+        }
+        if (maxShield) {
+          drawBadgeLabel(ctx, 640, 326, 'STORM SHIELDED', '#79C8E8', '#79C8E8');
+        }
+      } else if (sceneIndex === 1) {
+        // Scene 2: Science Score + Harvest & Ice-Core Rover Display
+        drawPixelRover(ctx, 865, 434, ambientSec, true, hasIceCargo, false);
+        drawBadgeLabel(
+          ctx,
+          640,
+          312,
+          `SCIENCE SCORE: ${state.sub.scienceScore} PTS`,
+          '#FFD66B',
+          '#FFD66B',
+        );
+        if (lushGreenhouse) {
+          drawBadgeLabel(ctx, 430, 368, 'HARVEST THRIVING', '#9BD8A7', '#9BD8A7');
+        }
+      } else {
+        // Scene 3: Earth Uplink Broadcast to Abdul & Relief Lander Salute
+        drawEarthRadioPulseArc(ctx, 950, 314, 258, 174, ambientSec, '#9BD8A7');
+        drawBadgeLabel(ctx, 490, 146, 'ABDUL & EARTH RECEIVING DATA!', '#9BD8A7', '#9BD8A7');
+        const landerY = Math.min(372, 110 + sceneSec * 78);
+        drawOrionSpacecraft(ctx, 1135, landerY, 0.9, landerY < 368 ? 1 : 0.2, ambientSec, false);
+      }
 
       for (let i = 0; i < ON_BASE_CREW_IDS.length; i++) {
         const id = ON_BASE_CREW_IDS[i];
@@ -3342,7 +4558,7 @@ function drawEndingScene(
         const jump = Math.abs(Math.sin(ambientSec * 5.2 + i * 0.9)) * 10;
         drawAstronautSprite(
           ctx,
-          430 + i * 95,
+          410 + i * 92,
           456 - jump,
           CREW_PROFILES[id].accentColor,
           CREW_PROFILES[id].name.split(' ')[0] ?? id,
@@ -3352,6 +4568,7 @@ function drawEndingScene(
             walking: false,
             walkPhase: 0,
             facing: 'down',
+            emote: 'cheer',
           },
         );
       }
@@ -3365,21 +4582,53 @@ function drawEndingScene(
         litLevel: 1,
         emergencyAmber: false,
         beaconGreen: true,
-        frosted: false,
+        frosted,
         roverPresent: true,
         flagWave: true,
       });
 
-      const ferryY = Math.min(368, 108 + sceneSec * 68);
-      drawOrionSpacecraft(ctx, 1120, ferryY, 0.92, ferryY < 364 ? 0.85 : 0.15, ambientSec, false);
-
-      const wave = (ambientSec * 0.9) % 1;
-      const wx = 950 - wave * (950 - 275);
-      const wy = 318 - wave * (318 - 172);
-      ctx.beginPath();
-      ctx.arc(wx, wy, 9, 0, Math.PI * 2);
-      ctx.fillStyle = '#FFD66B';
-      ctx.fill();
+      if (sceneIndex === 0) {
+        drawAstronautSprite(ctx, 560, 456, '#FFD66B', 'COMMANDER', {
+          isCommander: true,
+          tSec: ambientSec,
+          phaseOffset: 0,
+          walking: false,
+          walkPhase: 0,
+          facing: 'down',
+          emote: 'cheer',
+        });
+        if (isSunlit) {
+          drawBadgeLabel(ctx, 430, 360, 'SUNLIT SOLAR RIDGE', '#FFD66B', '#FFD66B');
+        } else if (isCrater) {
+          drawBadgeLabel(ctx, 430, 360, 'CRATER ICE CAMP', '#79C8E8', '#79C8E8');
+        }
+      } else if (sceneIndex === 1) {
+        drawPixelRover(ctx, 845, 436, ambientSec, true, hasIceCargo, frosted);
+        for (let i = 0; i < ON_BASE_CREW_IDS.length; i++) {
+          const id = ON_BASE_CREW_IDS[i];
+          if (!id) continue;
+          drawAstronautSprite(
+            ctx,
+            405 + i * 86,
+            458,
+            CREW_PROFILES[id].accentColor,
+            CREW_PROFILES[id].name.split(' ')[0] ?? id,
+            {
+              tSec: ambientSec,
+              phaseOffset: i * 0.8,
+              walking: false,
+              walkPhase: 0,
+              facing: 'down',
+              emote: lushGreenhouse ? 'cheer' : null,
+            },
+          );
+        }
+      } else {
+        const ferryY = Math.min(368, 108 + sceneSec * 68);
+        drawOrionSpacecraft(ctx, 1120, ferryY, 0.92, ferryY < 364 ? 0.85 : 0.15, ambientSec, false);
+        drawEarthRadioPulseArc(ctx, 950, 318, 275, 172, ambientSec, '#FFD66B');
+        drawBadgeLabel(ctx, 520, 146, 'ABDUL: NEXT CREW ARRIVING!', '#9BD8A7', '#9BD8A7');
+      }
       break;
     }
 
@@ -3387,16 +4636,61 @@ function drawEndingScene(
       drawCutsceneStarfield(ctx, ambientSec, 6);
       drawCutsceneEarth(ctx, 200, 158, 52, ambientSec);
       drawCutsceneOutpostHorizon(ctx, ambientSec, {
-        litLevel: 0.95,
-        emergencyAmber: false,
-        beaconGreen: true,
-        frosted: false,
+        litLevel: sceneIndex === 0 ? 0.72 : 0.98,
+        emergencyAmber: sceneIndex === 0,
+        beaconGreen: sceneIndex > 0,
+        frosted,
         roverPresent: true,
-        hatchOpenProgress: Math.min(1, sceneSec / 1.8),
+        hatchOpenProgress: sceneIndex >= 1 ? Math.min(1, sceneSec / 1.5) : 0,
       });
 
-      const reliefY = Math.min(372, 120 + sceneSec * 72);
-      drawOrionSpacecraft(ctx, 1125, reliefY, 0.88, reliefY < 368 ? 0.85 : 0.15, ambientSec, false);
+      if (sceneIndex === 0) {
+        // Receding X-class solar flare streaks & brave shielding crew
+        for (let s = 0; s < 6; s++) {
+          const sx = 240 + ((s * 175 + ambientSec * 190) % 900);
+          const sy = 120 + (s % 3) * 62;
+          ctx.strokeStyle = s % 2 === 0 ? 'rgba(251, 191, 36, 0.65)' : 'rgba(232, 121, 249, 0.55)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(sx + 56, sy + 22);
+          ctx.stroke();
+        }
+        drawBadgeLabel(
+          ctx,
+          640,
+          318,
+          maxShield ? 'WATER-WALL HELD STRONG!' : 'HULL HELD AGAINST STORM!',
+          '#79C8E8',
+          '#79C8E8',
+        );
+      } else if (sceneIndex === 1) {
+        for (let i = 0; i < ON_BASE_CREW_IDS.length; i++) {
+          const id = ON_BASE_CREW_IDS[i];
+          if (!id) continue;
+          drawAstronautSprite(
+            ctx,
+            430 + i * 84,
+            458,
+            CREW_PROFILES[id].accentColor,
+            CREW_PROFILES[id].name.split(' ')[0] ?? id,
+            {
+              tSec: ambientSec,
+              phaseOffset: i,
+              walking: false,
+              walkPhase: 0,
+              facing: 'down',
+              shivering: frosted,
+              emote: frosted ? 'cold' : 'shield',
+            },
+          );
+        }
+      } else {
+        const reliefY = Math.min(372, 120 + sceneSec * 72);
+        drawOrionSpacecraft(ctx, 1125, reliefY, 0.88, reliefY < 368 ? 0.85 : 0.15, ambientSec, false);
+        drawEarthRadioPulseArc(ctx, 950, 318, 252, 162, ambientSec, '#79C8E8');
+        drawBadgeLabel(ctx, 510, 146, 'ABDUL: RELIEF FERRY ON PAD!', '#79C8E8', '#79C8E8');
+      }
       break;
     }
 
@@ -3407,14 +4701,40 @@ function drawEndingScene(
         litLevel: 0.65,
         emergencyAmber: true,
         beaconGreen: false,
-        frosted: false,
+        frosted,
         roverPresent: false,
       });
 
-      // Kid-safe automated rescue ascent back toward Orion orbiter
-      drawOrionSpacecraft(ctx, 760, 184, 0.92, 0.25, ambientSec, true);
-      const climb = Math.min(200, sceneSec * 52);
-      drawOrionSpacecraft(ctx, 1110, 392 - climb, 0.85, climb < 198 ? 1.0 : 0.2, ambientSec, false);
+      if (sceneIndex === 0) {
+        drawEarthRadioPulseArc(ctx, 268, 166, 946, 318, ambientSec, '#FFD66B');
+        drawBadgeLabel(ctx, 540, 144, 'ABDUL: SAFE EVACUATION PROTOCOL!', '#FFD66B', '#FFD66B');
+        drawOrionSpacecraft(ctx, 1110, 412, 0.88, 0.15, ambientSec, false);
+      } else if (sceneIndex === 1) {
+        for (let i = 0; i < 3; i++) {
+          const id = ON_BASE_CREW_IDS[i];
+          if (!id) continue;
+          drawAstronautSprite(
+            ctx,
+            840 + i * 52,
+            458,
+            CREW_PROFILES[id].accentColor,
+            CREW_PROFILES[id].name.split(' ')[0] ?? id,
+            {
+              tSec: ambientSec,
+              phaseOffset: i,
+              walking: true,
+              walkPhase: (ambientSec * 6) % 4,
+              facing: 'right',
+            },
+          );
+        }
+        drawOrionSpacecraft(ctx, 1110, 408, 0.9, 0.55, ambientSec, false);
+      } else {
+        drawOrionSpacecraft(ctx, 760, 184, 0.92, 0.25, ambientSec, true);
+        const climb = Math.min(200, sceneSec * 52);
+        drawOrionSpacecraft(ctx, 1110, 392 - climb, 0.85, climb < 198 ? 1.0 : 0.2, ambientSec, false);
+        drawBadgeLabel(ctx, 935, 144, 'ALL 6 CREW MEMBERS SAFE!', '#9BD8A7', '#9BD8A7');
+      }
       break;
     }
 
@@ -3433,8 +4753,6 @@ export function drawCutsceneFrame(
   state: Readonly<GameState>,
   elapsedMs?: number,
 ): void {
-  void state.day;
-
   const sceneSec = tick / 60;
   const ambientSec = elapsedMs !== undefined ? elapsedMs / 1000 : sceneSec;
 
@@ -3447,7 +4765,7 @@ export function drawCutsceneFrame(
   if (type === 'opening') {
     drawOpeningScene(ctx, sceneIndex, sceneSec, ambientSec);
   } else {
-    drawEndingScene(ctx, type, sceneIndex, sceneSec, ambientSec);
+    drawEndingScene(ctx, type, sceneIndex, sceneSec, ambientSec, state);
   }
 
   ctx.restore();

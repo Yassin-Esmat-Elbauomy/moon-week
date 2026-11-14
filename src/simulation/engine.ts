@@ -1167,7 +1167,7 @@ function applyDay7StageDecision(
         recoveredComms ? 'comms' : 'decision',
         `Sol 7 Stage ${stage}: ${optionSpec.label}`,
         recoveredComms
-          ? `${optionSpec.compoundingSummary} Carrier wave restored — Abd-Elrahman Ahmad back online!`
+          ? `${optionSpec.compoundingSummary} Carrier wave restored — Abdul back online!`
           : optionSpec.compoundingSummary,
       ),
     ],

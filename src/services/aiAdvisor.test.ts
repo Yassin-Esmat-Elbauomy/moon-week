@@ -17,7 +17,7 @@ describe('Earth Mission Control Uplink Service (aiAdvisor)', () => {
       generateReply: vi.fn(
         async (): Promise<EarthControlReply> => ({
           sender: 'abdelrahman',
-          senderName: 'Abd-Elrahman Ahmad',
+          senderName: 'Abdul',
           role: 'Communications Officer — Earth Control',
           expression: 'normal',
           oneWayDelaySeconds: 1.3,
@@ -37,11 +37,11 @@ describe('Earth Mission Control Uplink Service (aiAdvisor)', () => {
     expect(mockAdapter.generateReply).not.toHaveBeenCalled();
   });
 
-  it('delivers Abd-Elrahman Earth Control telemetry replies with 1.3s/2.6s light-time delay on Days 1–6', async () => {
+  it('delivers Abdul Earth Control telemetry replies with 1.3s/2.6s light-time delay on Days 1–6', async () => {
     const day1 = { ...createInitialGameState(), day: 1 as const };
     const replyDay1 = await queryEarthControl(day1, SUGGESTED_ADVISOR_QUESTIONS[1][0]!);
     expect(replyDay1.sender).toBe('abdelrahman');
-    expect(replyDay1.senderName).toBe('Abd-Elrahman Ahmad');
+    expect(replyDay1.senderName).toBe('Abdul');
     expect(replyDay1.oneWayDelaySeconds).toBe(1.3);
     expect(replyDay1.roundTripDelaySeconds).toBe(2.6);
     expect(replyDay1.telemetryAnalysis).toContain('Power 75%');

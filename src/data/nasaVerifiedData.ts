@@ -1,192 +1,220 @@
 import type { DayNumber, NasaScienceCardData, ScientificTermDefinition } from '../types/game';
 
+export interface NasaScienceStoryCardData extends NasaScienceCardData {
+  connectedStoryHook: string;
+}
+
 export const SCIENTIFIC_TERMS: Record<string, ScientificTermDefinition> = {
   Sol: {
     term: 'Sol',
     shortTitle: 'Solar Operational Day',
     kidExplanation:
-      'On Mars and in lunar outpost schedules, scientists call one operational day cycle a Sol. Inside our South Pole base, each Mission Day runs from 06:00 to 22:00 with artificial Earth-like lighting so the crew keeps a healthy body clock!',
+      'Astronauts call one mission day cycle a Sol. Inside our South Pole base, each Sol runs from 06:00 to 22:00 with timed indoor lighting so the crew keeps a healthy body clock.',
   },
   'Radiation Dose (mSv)': {
     term: 'Radiation Dose (mSv)',
-    shortTitle: 'Millisievert (Radiation Absorption)',
+    shortTitle: 'Millisievert (Absorbed Dose)',
     kidExplanation:
-      'A millisievert (mSv) measures how much energy from space radiation actually reaches inside a sheltered habitat. Space satellites measure raw particle storms outside, while thick water walls and crater rock reduce the dose inside the base.',
+      'A millisievert (mSv) measures how much radiation energy actually reaches inside a sheltered room. Satellites count raw particles outside in space, while water walls and crater rock cut the mSv dose inside.',
   },
   'Capillary Action': {
     term: 'Capillary Action',
-    shortTitle: 'Surface-Tension Water Climbing',
+    shortTitle: 'Zero-Power Water Climbing',
     kidExplanation:
-      'Capillary action happens when water sticks to tiny spaces inside a porous sponge or wick and climbs upward by itself without electric pumps—just like a paper towel soaking up a spill!',
+      'Under 1/6 Earth gravity (1.62 m/s²), water floats and clings to plant roots. Capillary wicks use tiny sponge-like spaces so water climbs smoothly to roots with 0 kW of electricity.',
   },
   'Coronal Mass Ejection (CME)': {
     term: 'Coronal Mass Ejection (CME)',
-    shortTitle: 'Giant Solar Plasma Cloud',
+    shortTitle: 'High-Speed Solar Proton Wave',
     kidExplanation:
-      'A Coronal Mass Ejection is a huge bubble of magnetized gas and fast-moving protons blasted off the Sun. When aimed toward the Earth-Moon system, it can disturb radio signals and increase radiation outside lunar habitats.',
+      'A Coronal Mass Ejection is a giant cloud of solar plasma and fast protons blasted off the Sun at over 1,400 km/s. When aimed at the Moon, it raises external radiation and can jam radio links.',
   },
   'Light-Time Delay': {
     term: 'Light-Time Delay',
-    shortTitle: '1.3-Second Earth–Moon Radio Travel',
+    shortTitle: '1.3s / 2.6s Earth–Moon Radio Wait',
     kidExplanation:
-      'Even at the speed of light (300,000 km per second), radio waves need 1.3 seconds to cross the 384,400 km gap from Earth to the Moon—and another 1.3 seconds back, creating a 2.6-second wait for every reply from Abd-Elrahman!',
+      'Even at light speed (300,000 km/s), radio signals need 1.3s to cross the 384,400 km gap to the Moon and 1.3s back—creating a 2.6s round-trip wait for every reply from Abdul.',
   },
   Microgravity: {
     term: 'Microgravity',
-    shortTitle: 'Very Weak Gravity Environment',
+    shortTitle: 'Weak & 1/6 Lunar Gravity',
     kidExplanation:
-      'On the International Space Station, astronauts float in microgravity, where water forms spheres instead of draining downward. On the Moon, gravity is one-sixth of Earth’s (1.62 m/s²), so water still moves differently than on Earth.',
+      'In orbit, water forms floating spheres instead of draining down. On the Moon, gravity is just 1.62 m/s² (one-sixth of Earth), so water still beads up and chokes plant roots without smart piping.',
+  },
+  'CO2 Scrubbing (ppm)': {
+    term: 'CO2 Scrubbing (ppm)',
+    shortTitle: 'Carbon Dioxide Parts Per Million',
+    kidExplanation:
+      'Every breath adds carbon dioxide (CO2) to sealed habitat air, measured in parts per million (ppm). Air scrubbers and greenhouse plants convert stale CO2 back into breathable oxygen.',
+  },
+  'Circadian Spectrum (nm)': {
+    term: 'Circadian Spectrum (nm)',
+    shortTitle: '460 nm Alert vs 600 nm Rest Light',
+    kidExplanation:
+      'NASA uses 460 nm blue-enriched LEDs to cue morning focus and 600 nm warm amber light at night so astronauts sleep soundly without natural Earth sunrises.',
   },
 };
 
-export const VERIFIED_NASA_DATASETS: Record<DayNumber, NasaScienceCardData> = {
+export const VERIFIED_NASA_DATASETS: Record<DayNumber, NasaScienceStoryCardData> = {
   1: {
     day: 1,
     source: 'NASA LRO / Artemis',
-    datasetTitle: 'LRO LOLA & Diviner — Shackleton Crater Rim Topography & Thermal Map',
+    datasetTitle: 'LRO LOLA & Diviner — Shackleton Crater Rim & Descent Limits',
     recordId: 'LRO-DIVINER-SHACKLETON-2023',
     liveStatus: 'verified_cache',
     satelliteObservation:
-      'NASA Lunar Reconnaissance Orbiter (LRO) Diviner radiometer maps record ~220 K (-53°C) average temperatures and >90% annual illumination along elevated Shackleton Crater rim ridges, versus 40–110 K (-233°C to -163°C) inside Permanently Shadowed Regions (PSRs).',
+      'NASA Lunar Reconnaissance Orbiter (LRO) maps show Shackleton peaks stay sunlit at -53°C while deep crater rims drop to -200°C and trap frozen ice under 1.62 m/s² gravity.',
     scientificInterpretation:
-      'Because the Moon’s spin axis tilts only ~1.5°, high south-polar ridges stay in near-continuous sunlight ideal for solar arrays, while deep crater floors stay permanently cold enough to trap ancient water-ice crystals.',
+      'With no lunar air to slow rockets, landers must fire thrusters to touch down below 3.0 m/s, while Earth radio takes 1.3s one-way (2.6s round-trip) to arrive.',
     gameSimulationRule:
-      'Sunlit Ridge grants +6 Power/day solar generation but faces open storm exposure (-10 Shielding in Sol 4 storms). Crater Shadow Rim grants +15 Water on landing and +10 natural terrain Shielding in storms, at -4 Power/day.',
+      'Touchdowns at 3.0 m/s or faster dent -10 Shielding. Sunlit Peak gives +6 Power/day (but -10 Storm Shielding), while Crater Rim gives +15 Water and +10 Storm Shielding (at -4 Power/day).',
     whyThisMatters:
-      'Real NASA Artemis III landing-site planners balance sunlight for solar power against nearby permanently shadowed craters that could supply drinking water, oxygen, and rocket fuel.',
+      'Real NASA Artemis planners weigh continuous solar kW on bright ridges against frozen crater water needed for drinking, oxygen, and rocket fuel.',
+    connectedStoryHook:
+      'Your Sol 1 landing choice sets the power and storm cover every base room relies on for the whole 7-day mission.',
     rawMetrics: [
-      { label: 'Ridge Temp (LRO Diviner)', value: '~220 K (-53°C)' },
-      { label: 'PSR Floor Temp', value: '40–110 K (-233°C to -163°C)' },
-      { label: 'Lunar Gravity', value: '1.62 m/s² (1/6 Earth)' },
-      { label: 'Earth–Moon Radio Delay', value: '1.3 s one-way / 2.6 s round-trip' },
+      { label: 'Safe Touchdown', value: '< 3.0 m/s (1.62 m/s²)' },
+      { label: 'Radio Delay', value: '1.3s one-way / 2.6s loop' },
+      { label: 'Sunlit Peak', value: '~-53°C (High Solar kW)' },
+      { label: 'Crater Cold Trap', value: '-200°C (Trapped Ice)' },
     ],
   },
   2: {
     day: 2,
     source: 'NASA OSDR (Veggie/PONDS)',
-    datasetTitle:
-      'ISS Veggie & PONDS Capillary Crop Studies (OSD-655 / OSD-780) + CSA Space Food Toolkit',
+    datasetTitle: 'ISS Veggie & PONDS Capillary Crop Studies (OSD-655 / OSD-780)',
     recordId: 'OSD-655 / OSD-780 / CSA-FOOD',
     liveStatus: 'verified_cache',
     satelliteObservation:
-      'NASA Open Science Data Repository studies OSD-655 and OSD-780 archived pick-and-eat lettuce and dwarf tomato growth inside ISS Veggie hardware using Passive Orbital Nutrient Delivery System (PONDS) capillary mats versus actively circulated root modules, paired with the Canadian Space Agency (CSA) "Food Production on the Moon and in Remote Areas" educational engineering benchmarks.',
+      'NASA Open Science Data Repository (OSD-655 / OSD-780) tracked space lettuce under weak gravity where floating water clings around roots, compared against porous PONDS wicking mats.',
     scientificInterpretation:
-      'Active pumps circulate aerated water quickly for fast crop yield, but rely on continuous electricity. PONDS units use surface tension and adhesion inside porous wicking matrices to deliver water with zero electrical draw, trading speed and needing hands-on clogging checks.',
+      'In 1.62 m/s² lunar gravity, electric pumps circulate aerated water fast for big harvests using continuous kW, whereas capillary wicks pull water upward gently at 0 kW.',
     gameSimulationRule:
-      'Active Pumping Hydroponics yields +8 Life Support and +8 Food/day while drawing -8 Power/day—and stalls (-15 Life Support, -15 Food) if Power drops below 25. Capillary PONDS draws 0 Power/day but needs manual tending (+8 Crew Fatigue/day, -6 Crew Readiness/day on Sols 3–6).',
+      'Active Pumps give +8 Life Support and +8 Food/day for -8 Power/day—and stall if Power drops under 25%. Capillary Tubes use 0 Power/day but add +8 Crew Fatigue/day from hand tending.',
     whyThisMatters:
-      'Astronauts on long lunar stays need fresh salads, balanced nutrition, and oxygen from plants—and lessons from NASA Veggie/PONDS and the CSA Space Food Toolkit also advance sustainable farming in harsh, remote communities here on Earth.',
+      'Space gardens turn water and CO2 into fresh salads and oxygen while teaching water-saving farming for dry places on Earth.',
+    connectedStoryHook:
+      'Your Sol 1 landing power budget meets Sayed’s Greenhouse: hungry electric pumps will stall if storms pull base Power below 25%.',
     rawMetrics: [
-      { label: 'OSDR Study IDs', value: 'OSD-655 & OSD-780' },
-      { label: 'Hardware + Partner', value: 'ISS Veggie/PONDS + CSA Toolkit' },
-      { label: 'Passive Pump Power', value: '0 W (Capillary Wicking)' },
-      { label: 'Active Pump Vulnerability', value: 'Stalls if Power < 25%' },
+      { label: 'Lunar Gravity', value: '1.62 m/s² (1/6 Earth)' },
+      { label: 'Capillary Draw', value: '0 kW (Surface Tension)' },
+      { label: 'Active Pump Risk', value: 'Stalls if Power < 25%' },
+      { label: 'OSDR Benchmark', value: 'OSD-655 & OSD-780' },
     ],
   },
   3: {
     day: 3,
     source: 'NASA LRO / Artemis',
-    datasetTitle: 'Lunar South Pole Regolith Dust Charging & Eclipse Power Thermal Budgeting',
+    datasetTitle: 'Charged Lunar Dust & South Pole Thermal Power Budgeting',
     recordId: 'LRO-LAMP-DUST-POWER-03',
     liveStatus: 'verified_cache',
     satelliteObservation:
-      'NASA LRO and surface dust experiments measure electrostatically charged lunar regolith grains clinging to solar panels and radiator fins, cutting photovoltaic efficiency while crater-rim shadows plunge external temperatures below -160°C.',
+      'NASA LRO dust detectors show static electricity lifts sharp lunar dust onto solar cells, cutting kW output up to 25% as crater shadows plunge outside gear toward -200°C.',
     scientificInterpretation:
-      'Without an atmosphere, static electricity lifts fine sharp moon dust onto solar cells, and batteries lose capacity rapidly when heaters are starved—forcing engineers to choose between immediate cabin warmth, reserve battery banks, or running regulators above rated limits.',
+      'When dusty panels drop available kW, base engineers must choose between warming living cabins, banking emergency battery kW, or overdriving power regulators past safe limits.',
     gameSimulationRule:
-      'Sweeping dust restores array output. Choosing Battery Storage (+15 Power, 100% Rover Battery) buffers the Sol 4 Solar Storm surge but cools the cabin overnight (+15 Crew Fatigue). Overclocking risks a Sol 7 power junction fault.',
+      'Battery Storage (+15 Power, 100% Rover Battery) buffers tomorrow’s solar storm surge at +15 Sol 4 Fatigue. Essential Heating keeps cabins warm but caps Rover Battery at 55%. Overclocking adds a Sol 7 fault risk.',
     whyThisMatters:
-      'Real lunar rovers and habitats need careful power budgets and dust-mitigation shields because cold shadows can freeze unheated electronics while overdriven power buses can trip critical breakers.',
+      'Managing kW reserves and wiping static moon dust keeps spacecraft batteries warm without blowing main electrical breakers.',
+    connectedStoryHook:
+      'Sayed’s Sol 2 garden and Yassin’s rover share the same dusty solar bus—tonight’s battery buffer decides whether Sol 4’s storm stalls the base.',
     rawMetrics: [
-      { label: 'Solar Cell Dust Loss', value: 'Up to 18–25% uncleaned' },
-      { label: 'Shadow Thermal Drop', value: '-160°C external ambient' },
-      { label: 'Battery Surge Margin', value: 'Buffers Sol 4 Storm Bus' },
-      { label: 'Overclock Risk Flag', value: 'Sol 7 Junction Fault Risk' },
+      { label: 'Dust Solar Loss', value: '18–25% kW Drop' },
+      { label: 'Eclipse Cold', value: '-160°C to -200°C' },
+      { label: 'Storm Buffer', value: 'Battery Storage Ready' },
+      { label: 'Overclock Hazard', value: 'Sol 7 Junction Surge' },
     ],
   },
   4: {
     day: 4,
     source: 'NASA DONKI',
-    datasetTitle:
-      'NASA DONKI Solar Flare (FLR) & OSDR RadLab Absorbed Dosimetry Calibration',
-    recordId: '2024-05-14T16:51:00-FLR-001 (X8.7 / AR13664)',
+    datasetTitle: 'NASA DONKI X8.7 Solar Flare & OSDR RadLab Habitat Dosimetry',
+    recordId: '2024-05-14T16:51:00-FLR-001',
     liveStatus: 'verified_cache',
     satelliteObservation:
-      'NOAA/GOES X-ray sensors and SOHO coronagraphs recorded in NASA DONKI observed an X8.7 solar flare peaking at 16:51 UTC on May 14, 2024 from active region AR13664, driving a Coronal Mass Ejection (CME) faster than 1,400 km/s and elevated >10 MeV satellite proton flux, contrasted with internal absorbed dose rates cataloged in NASA OSDR RadLab.',
+      'NASA DONKI recorded an X8.7 solar flare (AR13664) launching a >1,400 km/s Coronal Mass Ejection and intense proton flux across open cislunar space.',
     scientificInterpretation:
-      'CRITICAL DISTINCTION: Satellite X-ray class (X8.7) and space proton counts measure external space weather outside the Moon—NOT the internal millisievert (mSv) dose inside a shielded base! Water-filled radiation walls, habitat shielding thickness (modeled via OSDR RadLab dosimetry data), and crater cliffs absorb incoming protons before they reach the crew.',
+      'Satellite X-ray class and space proton flux measure external space weather—NOT the internal millisievert (mSv) dose inside a shielded base! Water-filled walls and crater rock absorb protons before they reach the crew.',
     gameSimulationRule:
-      'Max Water-Wall Shielding protects crew (+15 Shielding, modified +10 on Crater Shadow or -10 on Sunlit Ridge) at a -25 Power cost—triggering an Unbuffered Storm Bus Overload (Power < 25) if Active Pumps lack Sol 3 Battery Storage.',
+      'Full Water Shielding adds +15 Shielding (+10 Crater Rim / -10 Sunlit Peak) for -25 Power—causing an Unbuffered Storm Bus Overload and Active Pump Stall if Sol 3 skipped Battery Storage.',
     whyThisMatters:
-      'Because the Moon lacks Earth’s protective magnetic field and thick air, NASA space weather forecasters pair DONKI external storm alerts with OSDR RadLab dosimetry models so astronauts activate water-wall storm shelters in time.',
+      'Because the Moon has no magnetic shield or atmosphere, pairing DONKI alerts with water-wall shelters keeps crew mSv exposure safely low.',
+    connectedStoryHook:
+      'Sol 1’s rock cover and Sol 3’s battery bank collide right now: Full Water Shields draw massive kW while blocking incoming proton mSv.',
     rawMetrics: [
-      { label: 'Satellite Flare Class', value: 'X8.7 (External GOES X-Ray)' },
-      { label: 'CME Speed Estimate', value: '>1,400 km/s (AR13664)' },
-      { label: 'Dosimetry Benchmark', value: 'NASA OSDR RadLab (mSv/day)' },
-      { label: 'Observation vs Dose', value: 'External Flux != Habitat mSv' },
+      { label: 'External Flare', value: 'X8.7 (>1,400 km/s CME)' },
+      { label: 'Habitat Metric', value: 'Internal Dose (mSv)' },
+      { label: 'Shield Draw', value: '-25 Power (Water Pumps)' },
+      { label: 'Data Boundary', value: 'Space Flux != Room mSv' },
     ],
   },
   5: {
     day: 5,
     source: 'NASA OSDR (Human Research)',
-    datasetTitle: 'NASA OSDR Circadian Lighting, Fatigue & RadLab Exposure Recovery Studies',
+    datasetTitle: 'NASA OSDR Circadian Lighting (460/600 nm) & CO2 Crew Recovery',
     recordId: 'OSDR-HRP-SSLA-RADLAB-05',
     liveStatus: 'verified_cache',
     satelliteObservation:
-      'NASA Human Research Program, ISS Solid-State Lighting Assembly (SSLA), and OSDR RadLab dosimetry records show off-Earth crews average ~6 hours of fragmented sleep per day without natural 24-hour sunlight cues, compounding radiation-stress fatigue and slowing reaction speed.',
+      'NASA Human Research and ISS lighting logs show crews average ~6.0 hours of fragmented sleep without Earth sunrises, while rising cabin CO2 ppm slows astronaut reaction times.',
     scientificInterpretation:
-      'Blue-enriched daytime LED spectrum (around 460–480 nm) cues alertness, while warm amber evening spectrum (~600–620 nm), proper hydration, and scheduled rest prevent burnout. Individual exhaustion lowers precision well before medical emergencies occur.',
+      'Scrubbing CO2 ppm restores alert thinking, while pairing 460 nm daytime blue light with 600 nm warm amber rest light resets crew circadian clocks and rebuilds physical resilience.',
     gameSimulationRule:
-      'Specialists above 70 Fatigue operate at half output and are forced to rest at 90. Full 24-Hour Rest restores +20 Health, -30 Fatigue, and +25 Crew Readiness for Sol 7 resilience, at a -25 Medkit cost and -8 exterior Shielding maintenance pause.',
+      'Specialists at 70+ Fatigue work at half output and rest automatically at 90+. Full Rest grants +20 Health, -30 Fatigue, +25 Crew Readiness, and Sol 7 Crisis Resilience for -25 Medkits and -8 Shielding.',
     whyThisMatters:
-      'Keeping astronauts rested, hydrated, and synced to a healthy sleep schedule is just as important for mission safety as oxygen tanks and solar panels.',
+      'Fresh air with low CO2 ppm and protected sleep schedules keep astronauts sharp during high-pressure emergencies.',
+    connectedStoryHook:
+      'Cold Sol 3 cabins and Sol 4 storm stress spiked crew fatigue and CO2 ppm—restoring team alertness now preps everyone for Sol 6 and Sol 7.',
     rawMetrics: [
-      { label: 'Mean Flight Sleep', value: '~6.0 hrs/night unassisted' },
-      { label: 'SSLA Alert Spectrum', value: '460–480 nm Blue-Enriched' },
-      { label: 'SSLA Rest Spectrum', value: '600–620 nm Warm Amber' },
-      { label: 'Safety Thresholds', value: '50% output >=70 / Forced >=90' },
+      { label: 'CO2 Safe Target', value: '< 1,000 CO2 ppm' },
+      { label: 'Alert Spectrum', value: '460 nm Blue-Enriched' },
+      { label: 'Sleep Spectrum', value: '600 nm Warm Amber' },
+      { label: 'Fatigue Limits', value: '50% at 70 / Rest at 90' },
     ],
   },
   6: {
     day: 6,
     source: 'NASA LRO / Artemis',
-    datasetTitle: 'NASA LRO Polar Cold-Trap Water-Ice Prospecting & S-Band Relay Coverage',
+    datasetTitle: 'LRO Polar -200°C Cold-Trap Ice & S-Band Relay Telemetry',
     recordId: 'LRO-PSR-VOLATILES-VIPER-06',
     liveStatus: 'verified_cache',
     satelliteObservation:
-      'LRO Neutron Spectrometer and Diviner observations confirm hydrogen-rich deposits mixed into shadowed polar craters at 40–110 K, while rugged crater walls block direct line-of-sight radio waves unless an elevated S-band relay dish is maintained.',
+      'NASA LRO neutron maps spot hydrogen-rich water ice inside -200°C Permanently Shadowed Craters, while steep rim walls block direct S-band radio unless an elevated relay dish is aimed.',
     scientificInterpretation:
-      'Driving a rover into a -200°C cold trap drains battery heaters rapidly to extract priceless water-ice samples. Servicing the sunlit relay dish instead ensures clean local telemetry backups if Earth radio signals get disrupted.',
+      'Driving rovers through -200°C shadows burns heavy battery kW to keep wheels unfrozen while drilling ice; servicing the ridge relay dish protects autonomous radio locks over the crater wall.',
     gameSimulationRule:
-      'Crater Ice Extraction grants +25 Water, +15 Life Support, and +25 Science Score for -45 Rover Battery and -15 Power. Comms Dish Maintenance leaves Emergency Relay reinforced, unlocking Taha’s pre-cached autonomous lock in Sol 7 Stage 3.',
+      'Scoop Crater Ice adds +25 Water, +15 Life Support, and +25 Science Score for -45 Rover Battery and -15 Power. Fix Solar Relay adds +15 Power, +10 Shielding, and reinforces the Emergency Relay for Sol 7.',
     whyThisMatters:
-      'Future Artemis rovers must brave pitch-black cryogenic craters for water ice while keeping high-gain radio relays aligned with Earth across rugged lunar mountains.',
+      'Lunar rovers need thermal wheel heaters to survive -200°C ice traps and clean S-band relays to beam science home.',
+    connectedStoryHook:
+      'With rested crew from Sol 5, Yassin can brave -200°C crater shadows for ice or fortify Taha’s relay dish right before Sol 7’s radio blackout.',
     rawMetrics: [
-      { label: 'Crater Cold-Trap Temp', value: '~-200°C (73 K nominal)' },
-      { label: 'Ice Extraction Draw', value: '-45 Rover Battery (Heaters)' },
-      { label: 'Relay Band', value: 'S-Band High-Gain Telemetry' },
-      { label: 'Sol 7 Prep Flag', value: 'Emergency Relay status' },
+      { label: 'Shadow Trap Temp', value: '-200°C (Wheel Freeze)' },
+      { label: 'Ice Drill Draw', value: '-45% Rover Battery' },
+      { label: 'Telemetry Link', value: 'S-Band Relay (1.3s)' },
+      { label: 'Blackout Prep', value: 'Sol 7 Dish Lock Bonus' },
     ],
   },
   7: {
     day: 7,
     source: 'NASA DONKI',
-    datasetTitle: 'Solar Radio Burst Ionospheric Noise & Autonomous Lunar Contingency Ops',
+    datasetTitle: 'Solar Radio Burst Interference & 3-Stage Autonomous Recovery',
     recordId: 'DONKI-RBR-BLACKOUT-DAY7',
     liveStatus: 'verified_cache',
     satelliteObservation:
-      'Strong solar radio bursts (Type II/IV bursts tracked in NASA space weather alerts) flood S-band and X-band radio receivers with broadband noise across the Earth–Moon link, overwhelming weak carrier signals during severe solar storm peaks.',
+      'Intense Type II/IV solar radio bursts flood S-band receivers with broadband static, drowning out weak 2.6s Earth–Moon radio carrier signals across the lunar South Pole.',
     scientificInterpretation:
-      'When external solar radio interference severs contact with Earth Mission Control, ground flight directors cannot send real-time telemetry commands—the lunar crew must diagnose power buses, life support, and local transponders autonomously using saved logs.',
+      'When solar noise severs Earth Mission Control Uplink, astronauts must run autonomous checklist triage—tapping local battery kW, balancing O2/CO2, and locking backup dish beacons solo.',
     gameSimulationRule:
-      'During Sol 7 Part B & C, Earth Comms Blackout active enforces a hard service-level lockout (COMMS_BLACKOUT_ACTIVE) on Earth Control Uplink until Taha realigns the local backup carrier in Stage 3.',
+      'Sol 7 Midday triggers Earth Comms Blackout until Stage 3 restores the carrier. Rover Bus Tap needs >=30% Rover Battery; Medbay O2 Divert needs >=20% Medkits; Phased Array Lock gets +10 Power if the Relay was fixed on Sol 6.',
     whyThisMatters:
-      'Deep-space crews train to handle temporary communication blackouts on their own, applying engineering checklists and teamwork until the radio link recovers.',
+      'Future deep-space astronauts on the Moon and Mars must solve life-support and power crises independently whenever solar storms cut Earth radio.',
+    connectedStoryHook:
+      'Every Sol 1–6 decision converges now: Earth radio is jammed by solar static, so your base survives on the reserves and relay you built all week!',
     rawMetrics: [
-      { label: 'Interference Type', value: 'Solar Radio Burst (Broadband)' },
-      { label: 'Normal Link Delay', value: '2.6 s round-trip (Severed)' },
-      { label: 'Service Lockout Code', value: 'COMMS_BLACKOUT_ACTIVE' },
-      { label: 'Recovery Requirement', value: '3-Stage Autonomous Triage' },
+      { label: 'Radio Disruption', value: 'Solar Broadband Static' },
+      { label: 'Normal Light Delay', value: '1.3s / 2.6s (Severed)' },
+      { label: 'Stage 1 / 2 Gates', value: '30% Rover / 20% Medkits' },
+      { label: 'Stage 3 Relay Boost', value: '+10 kW if Sol 6 Fixed' },
     ],
   },
 };
@@ -214,7 +242,8 @@ function parseDonkiFlareList(payload: unknown): DonkiFlareSummary[] {
     const flrID = typeof item.flrID === 'string' ? item.flrID : null;
     const classType = typeof item.classType === 'string' ? item.classType : null;
     const peakTime = typeof item.peakTime === 'string' ? item.peakTime : null;
-    const sourceLocation = typeof item.sourceLocation === 'string' ? item.sourceLocation : 'Solar Disk';
+    const sourceLocation =
+      typeof item.sourceLocation === 'string' ? item.sourceLocation : 'Solar Disk';
     if (flrID && classType && peakTime) {
       results.push({ flrID, classType, peakTime, sourceLocation });
     }
@@ -251,14 +280,14 @@ function formatUtcDateDaysAgo(daysAgo: number): string {
 }
 
 /**
- * Fetches live NASA DONKI space weather records for space-weather days (Day 4 & Day 7)
+ * Fetches live NASA DONKI space weather records for space-weather days (Sol 4 & Sol 7)
  * with a strict 2.5-second AbortController timeout, falling back seamlessly to
  * `VERIFIED_NASA_DATASETS` whenever offline, rate-limited, or invalid.
  */
 export async function getNasaDatasetForDay(
   day: DayNumber,
   fetchFn: typeof fetch = fetch,
-): Promise<NasaScienceCardData> {
+): Promise<NasaScienceStoryCardData> {
   const cached = VERIFIED_NASA_DATASETS[day];
   if (day !== 4 && day !== 7) {
     return { ...cached, rawMetrics: cached.rawMetrics.map((m) => ({ ...m })) };
@@ -288,12 +317,12 @@ export async function getNasaDatasetForDay(
       ...cached,
       recordId: strongest.flrID,
       liveStatus: 'live',
-      satelliteObservation: `Live NASA DONKI flare feed (${strongest.flrID}): NOAA/GOES sensors recorded an external ${strongest.classType}-class solar flare peaking at ${strongest.peakTime} from heliographic region ${strongest.sourceLocation}.`,
+      satelliteObservation: `Live NASA DONKI flare feed (${strongest.flrID}): GOES space sensors measured an external ${strongest.classType}-class solar flare peaking at ${strongest.peakTime} from region ${strongest.sourceLocation}.`,
       rawMetrics: [
         { label: 'Live Flare ID', value: strongest.flrID },
         { label: 'GOES X-Ray Class', value: strongest.classType },
         { label: 'Peak Time (UTC)', value: strongest.peakTime },
-        { label: 'Observation vs Dose', value: 'External Flux != Habitat mSv' },
+        { label: 'Data Boundary', value: 'Space Flux != Room mSv' },
       ],
     };
   } catch {

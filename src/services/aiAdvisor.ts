@@ -214,7 +214,7 @@ export const LiveLlmEarthControlAdapter: EarthControlAdapter = {
 
     const nasa = VERIFIED_NASA_DATASETS[state.day];
     const prompt = [
-      'You are Abd-Elrahman at Earth Mission Control advising a 7–12 year old Moon Commander.',
+      'You are Abdul at Earth Mission Control advising a 7–12 year old Moon Commander.',
       'Use super simple, friendly words with ZERO technical walls of text.',
       'Reply in 1–2 short sentences total (MAX 18 words per tip, MAX 10 words per JSON field!).',
       `Include "Power ${state.primary.power}%" in telemetryAnalysis.`,
@@ -282,7 +282,7 @@ export const LiveLlmEarthControlAdapter: EarthControlAdapter = {
 };
 
 /**
- * Primary service seam for Earth Mission Control Uplink (`Abd-Elrahman Ahmad`).
+ * Primary service seam for Earth Mission Control Uplink (`Abdul`).
  * Enforces the ADR-0002 service-level lockout (`COMMS_BLACKOUT_ACTIVE`) on Day 7 blackout
  * before any local or remote adapter can run.
  */
