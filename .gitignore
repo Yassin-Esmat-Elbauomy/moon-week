@@ -4,3 +4,10 @@ dist/
 .env.*
 *.local
 coverage/
+.agents/
+.scratch/
+docs/
+AGENTS.md
+GLOSSARY.md
+Main Prompt.md
+skills-lock.json
